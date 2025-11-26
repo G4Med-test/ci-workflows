@@ -11,6 +11,11 @@ on:
         description: "Name of the .sif container to be produced"
         required: true
         type: string
+      geant4_tag:
+        description: "Tag of the base carlomt/geant4 docker image, to set the Geant4 version"
+        required: false
+        default: "11.3.2-almalinux9"
+        type: string
 
 jobs:
   build-test-container:
@@ -36,10 +41,13 @@ jobs:
 
       - name: Build Container
         run: |
-          apptainer build "${{ inputs.image_name }}" "${{ inputs.apptainer_def }}"
+          apptainer build \
+            --build-arg TAG="${{ inputs.geant4_tag }}" \
+            --build-arg PROJECT_NAME="${{ github.event.repository.name }}" \
+            "${{ inputs.image_name }}" \
+            "${{ inputs.apptainer_def }}"
 
       - name: Login to GHCR
-        # Usiamo il token automatico, non secrets.GHCR_PAT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
