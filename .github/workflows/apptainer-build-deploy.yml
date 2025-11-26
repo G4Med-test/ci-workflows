@@ -39,12 +39,13 @@ jobs:
           apptainer build ${{ steps.set_sif.outputs.sif }} Apptainer.def
 
       - name: Login to GHCR
+        env:
+          CR_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo ${{ secrets.GHCR_PAT }} | apptainer registry login -u ${{ secrets.GHCR_USERNAME }} --password-stdin oras://ghcr.io
+          echo "$CR_PAT" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
 
       - name: Push Container to GHCR
         run: |
           repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           echo "Pushing to: oras://ghcr.io/${repo_lower}:${{ steps.set_tag.outputs.tag }}"
           apptainer push ${{ steps.set_sif.outputs.sif }} oras://ghcr.io/${repo_lower}:${{ steps.set_tag.outputs.tag }}
-          
