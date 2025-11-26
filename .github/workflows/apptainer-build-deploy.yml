@@ -15,7 +15,6 @@ on:
 jobs:
   build-test-container:
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
@@ -29,27 +28,25 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set build tag
-        id: set_tag
+        id: set_vars
         run: |
           echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-
-      - name: Set SIF filename
-        id: set_sif
-        run: |
-          echo "sif=${{ inputs.image_name }}" >> "$GITHUB_OUTPUT"
+          repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=${repo_lower}" >> "$GITHUB_OUTPUT"
 
       - name: Build Container
         run: |
-          apptainer build "${{ steps.set_sif.outputs.sif }}" "${{ inputs.apptainer_def }}"
+          apptainer build "${{ inputs.image_name }}" "${{ inputs.apptainer_def }}"
 
       - name: Login to GHCR
+        # Usiamo il token automatico, non secrets.GHCR_PAT
         env:
-          CR_PAT: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "$CR_PAT" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
+          echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
 
       - name: Push Container to GHCR
         run: |
-          repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "Pushing to: oras://ghcr.io/${repo_lower}:${{ steps.set_tag.outputs.tag }}"
-          apptainer push "${{ steps.set_sif.outputs.sif }}" "oras://ghcr.io/${repo_lower}:${{ steps.set_tag.outputs.tag }}"
+          IMAGE_URI="oras://ghcr.io/${{ steps.set_vars.outputs.repo_lower }}:${{ steps.set_vars.outputs.tag }}"
+          echo "Pushing to: $IMAGE_URI"
+          apptainer push "${{ inputs.image_name }}" "$IMAGE_URI"
