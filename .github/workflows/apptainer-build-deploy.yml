@@ -1,14 +1,21 @@
 name: Apptainer Build and Deploy
 
 on:
-  push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
+  workflow_call:
+    inputs:
+      apptainer_def:
+        description: "Path to the Apptainer.def file"
+        required: true
+        type: string
+      image_name:
+        description: "Name of the .sif container to be produced"
+        required: true
+        type: string
 
 jobs:
   build-test-container:
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       packages: write
@@ -17,26 +24,23 @@ jobs:
       image: carlomt/apptainer:1.3.2
       options: --privileged
 
-    name: Build and Deploy Container
     steps:
-
       - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Set build tag
         id: set_tag
         run: |
-          echo "tag=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Set SIF filename
         id: set_sif
         run: |
-          sif_file=$(echo "${{ github.repository }}" | awk -F/ '{print $2}')  # estrae solo "LowEFrag"
-          echo "sif=${sif_file}.sif" >> $GITHUB_OUTPUT
+          echo "sif=${{ inputs.image_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Build Container
         run: |
-          apptainer build ${{ steps.set_sif.outputs.sif }} Apptainer.def
+          apptainer build "${{ steps.set_sif.outputs.sif }}" "${{ inputs.apptainer_def }}"
 
       - name: Login to GHCR
         env:
@@ -48,4 +52,4 @@ jobs:
         run: |
           repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           echo "Pushing to: oras://ghcr.io/${repo_lower}:${{ steps.set_tag.outputs.tag }}"
-          apptainer push ${{ steps.set_sif.outputs.sif }} oras://ghcr.io/${repo_lower}:${{ steps.set_tag.outputs.tag }}
+          apptainer push "${{ steps.set_sif.outputs.sif }}" "oras://ghcr.io/${repo_lower}:${{ steps.set_tag.outputs.tag }}"
