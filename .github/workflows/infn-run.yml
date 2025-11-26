@@ -1,0 +1,101 @@
+name: INFN run  parallel
+
+on:
+  workflow_run:
+    workflows: ["INFN run unit"]    
+    types:
+      - completed
+
+jobs:
+  get-macros:
+    runs-on: aiinfn-runner-g4
+    
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}    
+    outputs:
+      macro_files: ${{ steps.list-macros.outputs.all_macros }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: List macro files
+        id: list-macros
+        run: |
+          MACRO_FILES=$(find macro/ -name "*.mac" -type f -printf '%P\n' | jq -R -s -c 'split("\n")[:-1]')
+          echo "all_macros=$MACRO_FILES" >> $GITHUB_OUTPUT
+
+      - name: Upload macro files
+        uses: actions/upload-artifact@v4
+        with:
+          name: macro-files
+          path: macro/*.mac
+
+          
+  pull-and-run-container:
+    needs: get-macros
+    runs-on: aiinfn-runner-g4
+    strategy:
+      fail-fast: false 
+      matrix:
+        macro: ${{ fromJson(needs.get-macros.outputs.macro_files) }}
+
+    steps:
+      - name: Download macro files
+        uses: actions/download-artifact@v4
+        with:
+          name: macro-files
+      - name: Set Apptainer Cache and Temp Directories
+        run: |
+          mkdir -p /tmp/apptainer_cache /tmp/apptainer_tmp /tmp/runner
+          echo "APPTAINER_CACHEDIR=/tmp/apptainer_cache" >> $GITHUB_ENV
+          echo "APPTAINER_TMPDIR=/tmp/apptainer_tmp" >> $GITHUB_ENV
+          
+      - name: Set tag and repo lowercase
+        id: setup
+        run: |
+          TAG=${{ github.event.workflow_run.head_sha }}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
+
+      - name: Login to GHCR
+        run: |
+          echo ${{ secrets.GHCR_PAT }} | apptainer registry login -u ${{ secrets.GHCR_USERNAME }} --password-stdin oras://ghcr.io
+
+      - name: Pull Container from GHCR
+        run: |
+          apptainer pull /tmp/runner/LowEFrag.sif oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}
+          
+      - name: Prepare apptainer command
+        run: |
+          echo "Contents of ${{ github.workspace }}:"
+          ls -l ${{ github.workspace }}
+          cat <<EOF > /tmp/runner/run
+          apptainer exec \
+            --unsquash \
+            -B /cvmfs/geant4.cern.ch/share/data:/opt/geant4/data \
+            -B "${{ github.workspace }}:/macro" \
+            -B "/tmp/outputs/:/outputs/" \
+            /tmp/runner/LowEFrag.sif \
+            "\$@"
+          EOF
+          mkdir -p /tmp/outputs/
+          chmod +x /tmp/runner/run
+          
+      - name: Check cvmfs
+        run: |
+          /tmp/runner/run bash -c "geant4-config --check-datasets"
+          
+      - name: Run the container with macro ${{ matrix.macro }}
+        run: |
+          echo "Running container with macro: ${{ matrix.macro }}"
+          cd /tmp/runner && ./run /workspace/build/LowEFrag /macro/${{ matrix.macro }}
+          
+      - name: Upload simulation outputs as artifactAdd commentMore actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-${{ matrix.macro }}
+          path: /tmp/outputs/
+
+      - name: Cleanup
+        run: |
+          rm -rf /tmp/runner /tmp/apptainer_*

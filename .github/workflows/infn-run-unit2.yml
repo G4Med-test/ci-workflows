@@ -1,0 +1,84 @@
+name: INFN run unit apptainer
+
+on:
+  workflow_run:
+    workflows: ["Container unit test"]
+    types:
+      - completed
+
+jobs:
+  pull-and-run-container:
+    runs-on: aiinfn-runner-g4
+
+    steps:
+
+      - name: Set Apptainer Cache and Temp Directories
+        run: |
+          mkdir -p /tmp/apptainer_cache
+          mkdir -p /tmp/apptainer_tmp
+          mkdir -p /tmp/runner
+          mkdir -p /tmp/repo          
+          echo "APPTAINER_CACHEDIR=/tmp/apptainer_cache" >> $GITHUB_ENV
+          echo "APPTAINER_TMPDIR=/tmp/apptainer_tmp" >> $GITHUB_ENV
+      
+      - name: Set tag and repo lowercase
+        id: setup
+        run: |
+          TAG=${{ github.event.workflow_run.head_sha }}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
+
+      - name: Set SIF filename
+        id: set_sif
+        run: |
+          sif_file=$(echo "${{ github.repository }}" | awk -F/ '{print $2}')  
+          echo "sif=${sif_file}.sif" >> $GITHUB_OUTPUT
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: /tmp/repo
+          
+      - name: Login to GHCR
+        run: |
+          echo ${{ secrets.GHCR_PAT }} | apptainer registry login -u ${{ secrets.GHCR_USERNAME }} --password-stdin oras://ghcr.io
+
+      - name: Pull Container from GHCR
+        run: |
+          apptainer pull /tmp/runner/LowEFrag.sif oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}
+          
+      - name: Prepare apptainer command
+        run: |
+          cat <<EOF > /tmp/runner/run
+          apptainer exec \
+            --unsquash \
+            -B /cvmfs/geant4.cern.ch/share/data:/g4data  \
+            /tmp/runner/LowEFrag.sif \
+            "\$@"
+          EOF
+          chmod +x /tmp/runner/run
+          cat /tmp/runner/run
+      
+      - name: Check cvmfs
+        run: |
+          ls /cvmfs/geant4.cern.ch
+          apptainer exec \
+          -B /cvmfs/geant4.cern.ch/share/data:/g4data  \
+          -B /tmp/runner/_work:/tmp/runner/_work \
+          /tmp/container \
+          bash -c "geant4-config --check-datasets"
+          
+      - name: Run the container
+        run: |
+          nproc
+          cat /proc/self/status | grep Cpus_allowed_list
+          lscpu
+          grep ^processor /proc/cpuinfo | wc -l
+          echo "Running container..."
+          cd /tmp/runner && \
+          apptainer run \
+          -B /cvmfs/geant4.cern.ch/share/data:/g4data  \
+          -B /tmp/runner/_work:/tmp/runner/_work \
+          ${{ steps.set_sif.outputs.sif }} \
+          $GITHUB_WORKSPACE/macro/unit.mac          
