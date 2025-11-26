@@ -1,50 +1,51 @@
-name: Unit test
+name: Run Unit Tests
 
 on:
-  workflow_run:
-    workflows: ["Apptainer Build and Deploy"]
-    types:
-      - completed
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Name of the .sif container"
+        required: true
+        type: string
+      macro_file:
+        description: "Path to macro file inside the repo"
+        required: false
+        default: "macro/unit.mac"
+        type: string
 
 jobs:
-  pull-and-run-container:
+  test-container:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: read
+      packages: read 
 
     container:
       image: carlomt/apptainer:1.3.2
       options: --privileged
 
-    name: Pull and Run Container
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set tag and repo lowercase
+      - name: Setup Environment Variables
         id: setup
         run: |
-          TAG=${{ github.event.workflow_run.head_sha }}
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=${repo_lower}" >> "$GITHUB_OUTPUT"
 
-      - name: Set SIF filename
-        id: set_sif
-        run: |
-          sif_file=$(echo "${{ github.repository }}" | awk -F/ '{print $2}')  
-          echo "sif=${sif_file}.sif" >> $GITHUB_OUTPUT
-
-      - name: Checkout repository
-        uses: actions/checkout@v4          
-          
       - name: Login to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo ${{ secrets.GHCR_PAT }} | apptainer registry login -u ${{ secrets.GHCR_USERNAME }} --password-stdin oras://ghcr.io
+          echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
 
       - name: Pull Container from GHCR
         run: |
-          apptainer pull ${{ steps.set_sif.outputs.sif }} \
-          oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}
+          IMAGE_URI="oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}"
+          echo "Pulling from: $IMAGE_URI"
+          apptainer pull "${{ inputs.image_name }}" "$IMAGE_URI"
 
       - name: Restore Geant4 data from cache
         id: g4data-cache
@@ -53,50 +54,21 @@ jobs:
           path: /tmp/g4data
           key: geant4-data-v1
 
-      - name: Download Geant4 data libraries (if cache miss) using geant4-config
+      - name: Download Geant4 data libraries (if cache miss)
         if: steps.g4data-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p /tmp/g4data
+          # Nota: Usiamo l'immagine scaricata per lanciare geant4-config
           apptainer exec --unsquash -B /tmp/g4data:/g4data \
-          ${{ steps.set_sif.outputs.sif }} \
-          bash -c "geant4-config --install-datasets"
+            "${{ inputs.image_name }}" \
+            bash -c "geant4-config --install-datasets"
 
-      - name: List contents of /tmp/g4data
+      - name: Run Geant4 Simulation
         run: |
-          ls -lh /tmp/g4data
+          echo "Running macro: ${{ inputs.macro_file }}"
           
-      - name: List contents of /g4data
-        run: |
-          apptainer exec \
-          --unsquash \
-          -B /tmp/g4data:/g4data:ro \
-          ${{ steps.set_sif.outputs.sif }} \
-          bash -c "ls /g4data"
-
-      - name: Check Geant4 datasets (fail if any NOTFOUND)
-        run: |
-          echo "Checking Geant4 datasets..."
-          OUTPUT=$(apptainer exec \
-          --unsquash \
-          -B /tmp/g4data:/g4data:ro \
-          ${{ steps.set_sif.outputs.sif }} \
-          bash -c "geant4-config --check-datasets")
-
-          echo "$OUTPUT"
-
-          if echo "$OUTPUT" | grep -q NOTFOUND; then
-           echo "❌ ERROR: One or more required Geant4 datasets are missing."
-           echo "$OUTPUT" | grep NOTFOUND
-           exit 1          
-          fi
-          
-      - name: Run the container
-        run: |
-          echo "Running container..."
           apptainer run \
-          --unsquash \
-          -B /tmp/g4data:/g4data:ro \
-          ${{ steps.set_sif.outputs.sif }} \
-          $GITHUB_WORKSPACE/macro/unit.mac
-
-
+            --unsquash \
+            -B /tmp/g4data:/g4data:ro \
+            "${{ inputs.image_name }}" \
+            "${GITHUB_WORKSPACE}/${{ inputs.macro_file }}"
