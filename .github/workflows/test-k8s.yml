@@ -1,0 +1,17 @@
+name: Test K8s Runner
+
+on:
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+  push:
+    branches:
+      - test-k8s-runner
+
+jobs:
+  test-pipeline:
+    uses: ./.github/workflows/pipeline.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image_name: "test.sif"
+      apptainer_def: "Apptainer.def"
