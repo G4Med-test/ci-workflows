@@ -30,12 +30,12 @@ jobs:
       image_name: ${{ inputs.image_name }}
       geant4_tag: ${{ inputs.geant4_tag }}
 
-  # unit-test:
-  #   needs: build
-  #   uses: G4Med-test/ci-workflows/.github/workflows/run-unit.yml@main
-  #   permissions:
-  #     contents: read
-  #     packages: read
-  #   with:
-  #     image_name: ${{ inputs.image_name }}
-  #     macro_file: ${{ inputs.macro_file }}
+  unit-test:
+    needs: build
+    uses: G4Med-test/ci-workflows/.github/workflows/run-unit.yml@main
+    permissions:
+      contents: read
+      packages: read
+    with:
+      image_name: ${{ inputs.image_name }}
+      macro_file: ${{ inputs.macro_file }}
