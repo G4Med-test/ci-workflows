@@ -19,7 +19,7 @@ on:
 
 jobs:
   build-test-container:
-    runs-on: ubuntu-latest
+    runs-on: geant-gha-runner-on-padova
     permissions:
       contents: read
       packages: write
