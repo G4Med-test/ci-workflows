@@ -21,7 +21,7 @@ on:
 
 jobs:
   build:
-    uses: G4Med-test/ci-workflows/.github/workflows/apptainer-build-deploy.yml@main
+    uses: G4Med-test/ci-workflows/.github/workflows/apptainer-build-deploy.yml@test-k8s-runner
     permissions:
       contents: read
       packages: write
