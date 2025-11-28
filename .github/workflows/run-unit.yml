@@ -20,13 +20,20 @@ jobs:
       contents: read
       packages: read 
 
-    container:
-      image: carlomt/apptainer:1.3.2
-      options: --privileged
+    env:
+      APPTAINER_CACHEDIR: /tmp/apptainer_cache
+      APPTAINER_TMPDIR: /tmp/apptainer_tmp
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Prepare Apptainer cache in /tmp
+        run: |
+          mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
+          echo "Using APPTAINER_CACHEDIR=$APPTAINER_CACHEDIR"
+          echo "Using APPTAINER_TMPDIR=$APPTAINER_TMPDIR"
+          df -h /tmp || true
 
       - name: Setup Environment Variables
         id: setup
@@ -58,17 +65,22 @@ jobs:
         if: steps.g4data-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p /tmp/g4data
-          # Nota: Usiamo l'immagine scaricata per lanciare geant4-config
-          apptainer exec --unsquash -B /tmp/g4data:/g4data \
+          apptainer exec --unsquash \
+            -B /tmp/g4data:/g4data \
             "${{ inputs.image_name }}" \
             bash -c "geant4-config --install-datasets"
 
       - name: Run Geant4 Simulation
         run: |
           echo "Running macro: ${{ inputs.macro_file }}"
-          
           apptainer run \
             --unsquash \
             -B /tmp/g4data:/g4data:ro \
+            -B "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
             "${{ inputs.image_name }}" \
             "${GITHUB_WORKSPACE}/${{ inputs.macro_file }}"
+
+      - name: Cleanup Apptainer cache in /tmp
+        if: always()
+        run: |
+          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true
