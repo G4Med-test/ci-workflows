@@ -2,7 +2,6 @@ Bootstrap: docker
 From: carlomt/geant4:{{ TAG }}
 
 %arguments
-    # Default values
     TAG=11.3.2-almalinux9
     PROJECT_NAME=G4TestGeneric
 
@@ -17,19 +16,21 @@ From: carlomt/geant4:{{ TAG }}
 
 %setup
     mkdir -p "$APPTAINER_ROOTFS/cvmfs"
-    
+    mkdir -p "$APPTAINER_ROOTFS/home/runner/_diag"
+    mkdir -p "$APPTAINER_ROOTFS/home/runner/_work"
+
 %environment
     export G4DATA_DIR=/g4data
     export G4INSTALL=/usr/local
     export LD_LIBRARY_PATH=/usr/local/lib64:$LD_LIBRARY_PATH
     export CMAKE_PREFIX_PATH=/usr/local:$CMAKE_PREFIX_PATH
-    # Aggiungiamo il bin al path così possiamo chiamare l'eseguibile ovunque
     export PATH=/usr/local/bin:$PATH
 
 %post
+    set -e
     mkdir build && cd build
     cmake -DPROJECT_NAME_OVERRIDE="{{ PROJECT_NAME }}" ../source
-    make -j$(nproc)
+    make -j"$(nproc)"
     make install
 
 %runscript
