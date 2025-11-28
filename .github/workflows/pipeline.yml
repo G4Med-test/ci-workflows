@@ -20,22 +20,22 @@ on:
         type: string
 
 jobs:
-  build:
-    uses: G4Med-test/ci-workflows/.github/workflows/apptainer-build-deploy.yml@test-k8s-runner
-    permissions:
-      contents: read
-      packages: write
-    with:
-      apptainer_def: ${{ inputs.apptainer_def }}
-      image_name: ${{ inputs.image_name }}
-      geant4_tag: ${{ inputs.geant4_tag }}
-
-  # unit-test:
-  #   needs: build
-  #   uses: G4Med-test/ci-workflows/.github/workflows/run-unit.yml@main
+  # build:
+  #   uses: G4Med-test/ci-workflows/.github/workflows/apptainer-build-deploy.yml@test-k8s-runner
   #   permissions:
   #     contents: read
-  #     packages: read
+  #     packages: write
   #   with:
+  #     apptainer_def: ${{ inputs.apptainer_def }}
   #     image_name: ${{ inputs.image_name }}
-  #     macro_file: ${{ inputs.macro_file }}
+  #     geant4_tag: ${{ inputs.geant4_tag }}
+
+  unit-test:
+    #needs: build
+    uses: G4Med-test/ci-workflows/.github/workflows/run-unit.yml@test-k8s-runner
+    permissions:
+      contents: read
+      packages: read
+    with:
+      image_name: ${{ inputs.image_name }}
+      macro_file: ${{ inputs.macro_file }}
