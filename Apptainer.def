@@ -15,6 +15,9 @@ From: carlomt/geant4:{{ TAG }}
 %files
     . /source
 
+%setup
+    mkdir -p "$APPTAINER_ROOTFS/cvmfs"
+    
 %environment
     export G4DATA_DIR=/g4data
     export G4INSTALL=/usr/local
