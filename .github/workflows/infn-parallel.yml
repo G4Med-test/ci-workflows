@@ -1,17 +1,19 @@
 name: INFN run parallel
 
 on:
-  workflow_run:
-    workflows: ["INFN run unit"]
-    types:
-      - completed
+  workflow_call:
+    inputs:
+      macro_splits:
+        required: false
+        type: number
+        default: 5
 
 env:
-  MACRO_SPLITS: 5
+  MACRO_SPLITS: ${{ inputs.macro_splits }}
 
 jobs:
   get-macros:
-    runs-on: aiinfn-runner-g4
+    runs-on: geant-gha-runner-on-padova
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     outputs:
       matrix: ${{ steps.expand.outputs.matrix }}
@@ -35,7 +37,7 @@ jobs:
 
   run-part:
     needs: get-macros
-    runs-on: aiinfn-runner-g4
+    runs-on: geant-gha-runner-on-padova
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.get-macros.outputs.matrix) }}
@@ -53,7 +55,7 @@ jobs:
       - name: Set tag and repo lowercase
         id: setup
         run: |
-          TAG=${{ github.event.workflow_run.head_sha }}
+          TAG=${GITHUB_SHA}
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
@@ -72,9 +74,10 @@ jobs:
           apptainer exec \
             --unsquash \
             -B /cvmfs/geant4.cern.ch/share/data:/opt/geant4/data \
-            -B "\${{ github.workspace }}/macro:/macro" \
+            -B "${GITHUB_WORKSPACE}/macro:/macro" \
             -B "/tmp/outputs:/outputs" \
-            /tmp/runner/LowEFrag.sif "\$@"
+            /tmp/runner/LowEFrag.sif \
+            "\$@"
           EOF
           chmod +x /tmp/runner/run
           mkdir -p /tmp/outputs /tmp/macros
@@ -97,7 +100,9 @@ jobs:
 
       - name: Run container with modified macro
         run: |
-          cd /tmp/runner && ./run /workspace/build/LowEFrag ${{ env.out_macro }}
+          cd /tmp/runner
+          echo "Running LowEFrag with macro: $out_macro"
+          ./run /workspace/build/LowEFrag "$out_macro"
 
       - name: Upload output artifact for part
         uses: actions/upload-artifact@v4
@@ -107,7 +112,7 @@ jobs:
 
   merge-parts:
     needs: run-part
-    runs-on: aiinfn-runner-g4
+    runs-on: geant-gha-runner-on-padova
     if: always()
 
     steps:
