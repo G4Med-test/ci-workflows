@@ -42,7 +42,7 @@ jobs:
 
   parallel:
     needs: unit-test
-    uses: G4Med-test/ci-workflows/.github/workflows/infn-run-parallel.yml@test-k8s-runner
+    uses: G4Med-test/ci-workflows/.github/workflows/infn-parallel.yml@test-k8s-runner
     permissions:
       contents: read
       packages: read
