@@ -19,6 +19,11 @@ From: carlomt/geant4:{{ TAG }}
     mkdir -p "$APPTAINER_ROOTFS/home/runner/_diag"
     mkdir -p "$APPTAINER_ROOTFS/home/runner/_work"
 
+    mkdir -p "$APPTAINER_ROOTFS/var/run/secrets/kubernetes.io/serviceaccount"
+    touch "$APPTAINER_ROOTFS/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    touch "$APPTAINER_ROOTFS/var/run/secrets/kubernetes.io/serviceaccount/token"
+    touch "$APPTAINER_ROOTFS/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
 %environment
     export G4DATA_DIR=/g4data
     export G4INSTALL=/usr/local
