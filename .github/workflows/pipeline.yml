@@ -39,3 +39,13 @@ jobs:
     with:
       image_name: ${{ inputs.image_name }}
       macro_file: ${{ inputs.macro_file }}
+
+  unit-test:
+    needs: build
+    uses: G4Med-test/ci-workflows/.github/workflows/run-unit-padova.yml@main
+    permissions:
+      contents: read
+      packages: read
+    with:
+      image_name: ${{ inputs.image_name }}
+      macro_file: ${{ inputs.macro_file }}
