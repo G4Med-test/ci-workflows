@@ -24,13 +24,20 @@ jobs:
       contents: read
       packages: write
 
-    # container:
-    #   image: carlomt/apptainer:1.3.2
-    #   options: --privileged
+    env:
+      APPTAINER_CACHEDIR: /tmp/apptainer_cache
+      APPTAINER_TMPDIR: /tmp/apptainer_tmp
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Prepare Apptainer cache in /tmp
+        run: |
+          mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
+          echo "Using APPTAINER_CACHEDIR=$APPTAINER_CACHEDIR"
+          echo "Using APPTAINER_TMPDIR=$APPTAINER_TMPDIR"
+          df -h /tmp || true
 
       - name: Set build tag
         id: set_vars
@@ -58,3 +65,8 @@ jobs:
           IMAGE_URI="oras://ghcr.io/${{ steps.set_vars.outputs.repo_lower }}:${{ steps.set_vars.outputs.tag }}"
           echo "Pushing to: $IMAGE_URI"
           apptainer push "${{ inputs.image_name }}" "$IMAGE_URI"
+
+      - name: Cleanup Apptainer cache in /tmp
+        if: always()
+        run: |
+          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true
