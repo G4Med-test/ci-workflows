@@ -1,15 +1,10 @@
 name: INFN run parallel
 
 on:
-  workflow_call:
-    inputs:
-      macro_splits:
-        required: false
-        type: number
-        default: 5
+  s
 
 env:
-  MACRO_SPLITS: ${{ inputs.macro_splits }}
+  MACRO_SPLITS: 5
 
 jobs:
   get-macros:
@@ -55,7 +50,7 @@ jobs:
       - name: Set tag and repo lowercase
         id: setup
         run: |
-          TAG=${GITHUB_SHA}
+          TAG=${{ github.event.workflow_run.head_sha }}
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
