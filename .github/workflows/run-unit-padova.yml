@@ -1,11 +1,12 @@
 name: INFN run unit
 
 on:
-  workflow_run:
-    workflows: ["Container unit test"]
-    types:
-      - completed
-
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Name of the .sif container"
+        required: true
+        type: string
 jobs:
   pull-and-run-container:
     runs-on: geant-gha-runner-on-padova
