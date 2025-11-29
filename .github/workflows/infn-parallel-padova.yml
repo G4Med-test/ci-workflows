@@ -66,7 +66,7 @@ jobs:
 
       - name: Pull Container from GHCR
         run: |
-          apptainer pull /tmp/runner/LowEFrag.sif oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}
+          apptainer pull --force /tmp/runner/LowEFrag.sif oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}
 
       - name: Prepare apptainer command
         run: |
