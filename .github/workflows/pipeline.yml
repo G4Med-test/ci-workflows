@@ -40,11 +40,11 @@ jobs:
       image_name: ${{ inputs.image_name }}
       macro_file: ${{ inputs.macro_file }}
 
-  # parallel:
-  #   needs: unit-test
-  #   uses: G4Med-test/ci-workflows/.github/workflows/infn-parallel.yml@test-k8s-runner
-  #   permissions:
-  #     contents: read
-  #     packages: read
-  #   with:
-  #     macro_splits: 5
+  parallel:
+    needs: unit-test
+    uses: G4Med-test/ci-workflows/.github/workflows/infn-parallel-padova.yml@test-k8s-runner
+    permissions:
+      contents: read
+      packages: read
+    with:
+      macro_splits: 5
