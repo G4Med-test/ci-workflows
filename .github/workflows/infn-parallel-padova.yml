@@ -71,10 +71,10 @@ jobs:
       - name: Prepare apptainer command
         run: |
           cat <<EOF > /tmp/runner/run
-          apptainer exec \
+          apptainer run \
             --unsquash \
             -B /cvmfs/geant4.cern.ch/share/data:/opt/geant4/data \
-            -B "${GITHUB_WORKSPACE}/macro:/macro" \
+            -B "/tmp/macros:/macro" \
             -B "/tmp/outputs:/outputs" \
             /tmp/runner/LowEFrag.sif \
             "\$@"
@@ -101,8 +101,10 @@ jobs:
       - name: Run container with modified macro
         run: |
           cd /tmp/runner
-          echo "Running LowEFrag with macro: $out_macro"
-          ./run /workspace/build/LowEFrag "$out_macro"
+          MACRO_NAME=$(basename "$out_macro")
+          MACRO_IN_CONTAINER="/macro/$MACRO_NAME"
+          echo "Running LowEFrag with macro in container: $MACRO_IN_CONTAINER"
+          ./run "$MACRO_IN_CONTAINER"
 
       - name: Upload output artifact for part
         uses: actions/upload-artifact@v4
