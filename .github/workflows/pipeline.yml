@@ -32,7 +32,7 @@ jobs:
 
   unit-test:
     needs: build
-    uses: G4Med-test/ci-workflows/.github/workflows/run-unit.yml@test-k8s-runner
+    uses: G4Med-test/ci-workflows/.github/workflows/run-unit-padova.yml@test-k8s-runner
     permissions:
       contents: read
       packages: read

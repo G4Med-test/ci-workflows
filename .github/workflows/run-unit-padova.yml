@@ -1,0 +1,86 @@
+name: Run Unit Tests Offloading Padova
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Name of the .sif container"
+        required: true
+        type: string
+      macro_file:
+        description: "Path to macro file inside the repo"
+        required: false
+        default: "macro/unit.mac"
+        type: string
+
+jobs:
+  test-container:
+    runs-on: geant-gha-runner-on-padova
+    permissions:
+      contents: read
+      packages: read 
+
+    env:
+      APPTAINER_CACHEDIR: /tmp/apptainer_cache
+      APPTAINER_TMPDIR: /tmp/apptainer_tmp
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Apptainer cache in /tmp
+        run: |
+          mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
+          echo "Using APPTAINER_CACHEDIR=$APPTAINER_CACHEDIR"
+          echo "Using APPTAINER_TMPDIR=$APPTAINER_TMPDIR"
+          df -h /tmp || true
+
+      - name: Setup Environment Variables
+        id: setup
+        run: |
+          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=${repo_lower}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
+
+      - name: Pull Container from GHCR
+        run: |
+          IMAGE_URI="oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}"
+          echo "Pulling from: $IMAGE_URI"
+          apptainer pull "${{ inputs.image_name }}" "$IMAGE_URI"
+
+      - name: Restore Geant4 data from cache
+        id: g4data-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/g4data
+          key: geant4-data-v1
+
+      - name: Download Geant4 data libraries (if cache miss)
+        if: steps.g4data-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/g4data
+          apptainer exec --unsquash \
+            -B /tmp/g4data:/g4data \
+            "${{ inputs.image_name }}" \
+            bash -c "geant4-config --install-datasets"
+
+      - name: Run Geant4 Simulation
+        run: |
+          echo "Running macro: ${{ inputs.macro_file }}"
+          apptainer run \
+            --unsquash \
+            -B /tmp/g4data:/g4data:ro \
+            -B "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
+            "${{ inputs.image_name }}" \
+            "${GITHUB_WORKSPACE}/${{ inputs.macro_file }}"
+
+      - name: Cleanup Apptainer cache in /tmp
+        if: always()
+        run: |
+          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true

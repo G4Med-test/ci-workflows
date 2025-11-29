@@ -1,8 +1,8 @@
-name: INFN run parallel
+name: INFN run parallel Offloading Padova
 
 on:
   workflow_run:
-    workflows: ["INFN run unit"]
+    workflows: ["Run Unit Tests Offloading Padova"]
     types:
       - completed
 
