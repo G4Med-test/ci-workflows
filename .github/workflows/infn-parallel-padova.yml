@@ -23,14 +23,17 @@ jobs:
         run: |
           PARTS=${{ inputs.macro_splits }}
           MACROS=$(find macro/ -name "*.mac" -type f -printf '%P\n')
-          MATRIX='['
+
+          # Build a JSON object with an "include" array for the dynamic matrix
+          MATRIX='{"include":['
           for MACRO in $MACROS; do
             for i in $(seq 0 $((PARTS-1))); do
               MATRIX="$MATRIX{\"macro\":\"$MACRO\",\"part\":$i},"
             done
           done
-          MATRIX="${MATRIX%,}]"
-          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          MATRIX="${MATRIX%,}]}"   # close the array and the object
+
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
   run-part:
     needs: get-macros
