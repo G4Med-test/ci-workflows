@@ -47,4 +47,4 @@ jobs:
       contents: read
       packages: read
     with:
-      macro_splits: 2
+      macro_splits: 5
