@@ -123,12 +123,13 @@ jobs:
 
       - name: Merge AIDA XML outputs
         run: |
-          mkdir -p /tmp/merged
+          mkdir -p merged
           find artifacts -name '*.xml' > filelist.txt
-          python3 .github/scripts/merge_aida.py $(cat filelist.txt) > /tmp/merged/merged.xml
+          cat filelist.txt  # Debug: show what files were found
+          python3 .github/scripts/merge_aida.py $(cat filelist.txt) > merged/merged.xml
 
       - name: Upload final merged output
         uses: actions/upload-artifact@v4
         with:
           name: final-merged-output
-          path: /tmp/merged/merged.xml
+          path: merged/merged.xml
