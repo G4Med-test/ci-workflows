@@ -120,15 +120,31 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+        continue-on-error: true   
 
       - name: Merge AIDA XML outputs
         run: |
           mkdir -p merged
-          find artifacts -name '*.xml' > filelist.txt
-          cat filelist.txt  # Debug: show what files were found
-          python3 .github/scripts/merge_aida.py $(cat filelist.txt) > merged/merged.xml
+
+          if [ ! -d artifacts ]; then
+            echo "No artifacts directory found, nothing to merge."
+            exit 0
+          fi
+
+          files=$(find artifacts -name '*.xml' -print)
+
+          if [ -z "$files" ]; then
+            echo "No XML files found in artifacts, nothing to merge."
+            exit 0
+          fi
+
+          echo "Merging the following files:"
+          printf '%s\n' $files
+
+          python3 .github/scripts/merge_aida.py $files > merged/merged.xml
 
       - name: Upload final merged output
+        if: success() 
         uses: actions/upload-artifact@v4
         with:
           name: final-merged-output
