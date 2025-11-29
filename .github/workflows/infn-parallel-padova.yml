@@ -1,18 +1,17 @@
 name: INFN run parallel Offloading Padova
 
 on:
-  workflow_run:
-    workflows: ["Run Unit Tests Offloading Padova"]
-    types:
-      - completed
-
-env:
-  MACRO_SPLITS: 5
+  workflow_call:
+    inputs:
+      macro_splits:
+        description: "Number of splits for each macro"
+        required: false
+        default: 5
+        type: number
 
 jobs:
   get-macros:
     runs-on: geant-gha-runner-on-padova
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     outputs:
       matrix: ${{ steps.expand.outputs.matrix }}
     steps:
@@ -22,7 +21,7 @@ jobs:
       - name: List macro files and expand matrix
         id: expand
         run: |
-          PARTS=${{ env.MACRO_SPLITS }}
+          PARTS=${{ inputs.macro_splits }}
           MACROS=$(find macro/ -name "*.mac" -type f -printf '%P\n')
           MATRIX='['
           for MACRO in $MACROS; do
@@ -53,14 +52,14 @@ jobs:
       - name: Set tag and repo lowercase
         id: setup
         run: |
-          TAG=${{ github.event.workflow_run.head_sha }}
+          TAG=${GITHUB_SHA}  # Changed from workflow_run.head_sha
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
 
       - name: Login to GHCR
         run: |
-          echo ${{ secrets.GHCR_PAT }} | apptainer registry login -u ${{ secrets.GHCR_USERNAME }} --password-stdin oras://ghcr.io
+          echo ${{ secrets.GITHUB_TOKEN }} | apptainer registry login -u ${{ github.actor }} --password-stdin oras://ghcr.io
 
       - name: Pull Container from GHCR
         run: |
@@ -86,7 +85,7 @@ jobs:
           OUTMACRO="/tmp/macros/part-${{ matrix.part }}.mac"
           OUTFILE="/outputs/part_${{ matrix.part }}.xml"
           SEED=$((1000 + ${{ matrix.part }}))
-          EVENTS=$((1000000 / ${{ env.MACRO_SPLITS }}))
+          EVENTS=$((1000000 / ${{ inputs.macro_splits }}))
 
           sed \
             -e "s|/outputs/.*\.xml|$OUTFILE|" \
@@ -105,7 +104,7 @@ jobs:
       - name: Upload output artifact for part
         uses: actions/upload-artifact@v4
         with:
-          name: partial-${{ matrix.macro }}
+          name: partial-${{ matrix.macro }}-${{ matrix.part }}
           path: /tmp/outputs/part_${{ matrix.part }}.xml
 
   merge-parts:
@@ -114,6 +113,9 @@ jobs:
     if: always()
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all part artifacts
         uses: actions/download-artifact@v4
         with:
