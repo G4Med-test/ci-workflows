@@ -24,7 +24,7 @@ for fname in sys.argv[1:]:
                 hbin["entries"] += entries
     except ET.ParseError as e:
         print(f"Error parsing {fname}: {e}", file=sys.stderr)
-        sys.exit(1)
+        continue
 
 print('<?xml version="1.0" encoding="UTF-8"?>')
 print('<!DOCTYPE aida SYSTEM "http://aida.freehep.org/schemas/3.2.1/aida.dtd">')
