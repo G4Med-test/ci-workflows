@@ -7,20 +7,24 @@ import math
 histos = defaultdict(lambda: defaultdict(lambda: {"height": 0.0, "error2": 0.0, "entries": 0}))
 
 for fname in sys.argv[1:]:
-    tree = ET.parse(fname)
-    root = tree.getroot()
-    for h in root.findall(".//histogram1d"):
-        name = h.attrib["name"]
-        bins = h.find("data1d").findall("bin1d")
-        for b in bins:
-            binNum = b.attrib["binNum"]
-            height = float(b.attrib["height"])
-            error = float(b.attrib["error"])
-            entries = int(b.attrib["entries"])
-            hbin = histos[name][binNum]
-            hbin["height"] += height
-            hbin["error2"] += error**2
-            hbin["entries"] += entries
+    try:
+        tree = ET.parse(fname)
+        root = tree.getroot()
+        for h in root.findall(".//histogram1d"):
+            name = h.attrib["name"]
+            bins = h.find("data1d").findall("bin1d")
+            for b in bins:
+                binNum = b.attrib["binNum"]
+                height = float(b.attrib["height"])
+                error = float(b.attrib["error"])
+                entries = int(b.attrib["entries"])
+                hbin = histos[name][binNum]
+                hbin["height"] += height
+                hbin["error2"] += error**2
+                hbin["entries"] += entries
+    except ET.ParseError as e:
+        print(f"Error parsing {fname}: {e}", file=sys.stderr)
+        sys.exit(1)
 
 print('<?xml version="1.0" encoding="UTF-8"?>')
 print('<!DOCTYPE aida SYSTEM "http://aida.freehep.org/schemas/3.2.1/aida.dtd">')
