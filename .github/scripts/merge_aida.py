@@ -26,15 +26,25 @@ print('<?xml version="1.0" encoding="UTF-8"?>')
 print('<!DOCTYPE aida SYSTEM "http://aida.freehep.org/schemas/3.2.1/aida.dtd">')
 print('<aida version="3.2.1">')
 
+def bin_sort_key(item):
+    bin_str = item[0]  
+    if bin_str.lstrip("-").isdigit():
+        return (0, int(bin_str))     
+    else:
+        return (1, bin_str)         
+
 for name, bins in histos.items():
     print(f'  <histogram1d name="{name}" path="/" title="{name}">')
     print(f'    <axis direction="x"/>')
     print(f'    <data1d>')
-    for binNum, values in sorted(bins.items(), key=lambda x: int(x[0]) if x[0].isdigit() else x[0]):
+    for binNum, values in sorted(bins.items(), key=bin_sort_key):
         height = values["height"]
         error = math.sqrt(values["error2"])
         entries = values["entries"]
-        print(f'      <bin1d binNum="{binNum}" entries="{entries}" height="{height}" error="{error:.10f}"/>')
+        print(
+            f'      <bin1d binNum="{binNum}" entries="{entries}" '
+            f'height="{height}" error="{error:.10f}"/>'
+        )
     print(f'    </data1d>')
     print(f'  </histogram1d>')
 
