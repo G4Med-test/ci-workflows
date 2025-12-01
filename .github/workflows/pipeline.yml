@@ -51,7 +51,7 @@ jobs:
       macro_file: ${{ inputs.macro_file }}
       
   parallel:
-    needs: unit-test
+    needs: unit-test-padova
     uses: G4Med-test/ci-workflows/.github/workflows/run-parallel-padova.yml@main
     permissions:
       contents: read

@@ -14,7 +14,7 @@ on:
         type: string
 
 jobs:
-  test-container:
+  test-container-padova:
     runs-on: geant-gha-runner-on-padova
     permissions:
       contents: read
