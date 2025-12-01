@@ -22,7 +22,8 @@ jobs:
         id: expand
         run: |
           PARTS=${{ inputs.macro_splits }}
-          MACROS=$(find macro/ -name "*.mac" -type f -printf '%P\n')
+          # List all .mac files excluding macro/unit.mac          
+          MACROS=$(find macro/ -name "*.mac" -type f -printf '%P\n' | grep -v "^unit\.mac$")
 
           # Build a JSON object with an "include" array for the dynamic matrix
           MATRIX='{"include":['
