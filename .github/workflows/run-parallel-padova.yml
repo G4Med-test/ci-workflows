@@ -1,0 +1,156 @@
+name: INFN run parallel Offloading Padova
+
+on:
+  workflow_call:
+    inputs:
+      macro_splits:
+        description: "Number of splits for each macro"
+        required: false
+        default: 5
+        type: number
+
+jobs:
+  get-macros:
+    runs-on: geant-gha-runner-on-padova
+    outputs:
+      matrix: ${{ steps.expand.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: List macro files and expand matrix
+        id: expand
+        run: |
+          PARTS=${{ inputs.macro_splits }}
+          MACROS=$(find macro/ -name "*.mac" -type f -printf '%P\n')
+
+          # Build a JSON object with an "include" array for the dynamic matrix
+          MATRIX='{"include":['
+          for MACRO in $MACROS; do
+            for i in $(seq 0 $((PARTS-1))); do
+              MATRIX="$MATRIX{\"macro\":\"$MACRO\",\"part\":$i},"
+            done
+          done
+          MATRIX="${MATRIX%,}]}"   # close the array and the object
+
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  run-part:
+    needs: get-macros
+    runs-on: geant-gha-runner-on-padova
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.get-macros.outputs.matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set Apptainer Cache and Temp Directories
+        run: |
+          mkdir -p /tmp/apptainer_cache /tmp/apptainer_tmp /tmp/runner
+          echo "APPTAINER_CACHEDIR=/tmp/apptainer_cache" >> $GITHUB_ENV
+          echo "APPTAINER_TMPDIR=/tmp/apptainer_tmp" >> $GITHUB_ENV
+
+      - name: Set tag and repo lowercase
+        id: setup
+        run: |
+          TAG=${GITHUB_SHA}  # Changed from workflow_run.head_sha
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
+
+      - name: Login to GHCR
+        run: |
+          echo ${{ secrets.GITHUB_TOKEN }} | apptainer registry login -u ${{ github.actor }} --password-stdin oras://ghcr.io
+
+      - name: Pull Container from GHCR
+        run: |
+          apptainer pull --force /tmp/runner/LowEFrag.sif oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}
+
+      - name: Prepare apptainer command
+        run: |
+          cat <<EOF > /tmp/runner/run
+          apptainer run \
+            --unsquash \
+            -B /cvmfs/geant4.cern.ch/share/data:/opt/geant4/data \
+            -B "/tmp/macros:/macro" \
+            -B "/tmp/outputs:/outputs" \
+            /tmp/runner/LowEFrag.sif \
+            "\$@"
+          EOF
+          chmod +x /tmp/runner/run
+          mkdir -p /tmp/outputs /tmp/macros
+
+      - name: Generate modified macro
+        run: |
+          INMACRO="macro/${{ matrix.macro }}"
+          OUTMACRO="/tmp/macros/part-${{ matrix.part }}.mac"
+          OUTFILE="/outputs/part_${{ matrix.part }}.xml"
+          SEED=$((1000 + ${{ matrix.part }}))
+          EVENTS=$((1000000 / ${{ inputs.macro_splits }}))
+
+          sed \
+            -e "s|/outputs/.*\.xml|$OUTFILE|" \
+            -e "/\/run\/beamOn/ c\/run/beamOn $EVENTS" \
+            -e "\$a\/random/setSeeds $SEED $SEED" \
+            "$INMACRO" > "$OUTMACRO"
+
+          echo "out_macro=$OUTMACRO" >> $GITHUB_ENV
+
+      - name: Run container with modified macro
+        run: |
+          cd /tmp/runner
+          MACRO_NAME=$(basename "$out_macro")
+          MACRO_IN_CONTAINER="/macro/$MACRO_NAME"
+          echo "Running LowEFrag with macro in container: $MACRO_IN_CONTAINER"
+          ./run "$MACRO_IN_CONTAINER"
+
+      - name: Upload output artifact for part
+        uses: actions/upload-artifact@v4
+        with:
+          name: partial-${{ matrix.macro }}-${{ matrix.part }}
+          path: /tmp/outputs/part_${{ matrix.part }}.xml
+
+  merge-parts:
+    needs: run-part
+    runs-on: geant-gha-runner-on-padova
+    if: always()
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all part artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+        continue-on-error: true   
+
+      - name: Merge AIDA XML outputs
+        run: |
+          mkdir -p merged
+
+          if [ ! -d artifacts ]; then
+            echo "No artifacts directory found, nothing to merge."
+            exit 0
+          fi
+
+          files=$(find artifacts -name '*.xml' -print)
+
+          if [ -z "$files" ]; then
+            echo "No XML files found in artifacts, nothing to merge."
+            exit 0
+          fi
+
+          echo "Merging the following files:"
+          printf '%s\n' $files
+
+          python3 .github/scripts/merge_aida.py $files > merged/merged.xml
+
+      - name: Upload final merged output
+        if: success() 
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-merged-output
+          path: merged/merged.xml
