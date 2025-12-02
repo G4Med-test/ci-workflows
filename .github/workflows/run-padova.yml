@@ -1,0 +1,116 @@
+name: run Offloading Padova
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: "Name of the .sif container"
+        required: true
+        type: string      
+
+
+jobs:
+  get-macros:
+    runs-on: geant-gha-runner-on-padova
+    outputs:
+      matrix: ${{ steps.expand.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: List macro files and expand matrix
+        id: expand
+        run: |
+          # Lista tutti i .mac tranne macro/unit.mac
+          MACROS=$(find macro/ -name "*.mac" -type f -printf '%P\n' | grep -v "^unit\.mac$")
+
+          MATRIX='{"include":['
+          for MACRO in $MACROS; do
+            MATRIX="$MATRIX{\"macro\":\"$MACRO\"},"
+          done
+          MATRIX="${MATRIX%,}]}"   # chiude l'array e l'oggetto
+
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  run-macro:
+    needs: get-macros
+    runs-on: geant-gha-runner-on-padova
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.get-macros.outputs.matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set Apptainer Cache and Temp Directories
+        run: |
+          mkdir -p /tmp/apptainer_cache /tmp/apptainer_tmp /tmp/runner
+          echo "APPTAINER_CACHEDIR=/tmp/apptainer_cache" >> $GITHUB_ENV
+          echo "APPTAINER_TMPDIR=/tmp/apptainer_tmp" >> $GITHUB_ENV
+
+      - name: Set tag and repo lowercase
+        id: setup
+        run: |
+          TAG=${GITHUB_SHA}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
+
+      - name: Login to GHCR
+        run: |
+          # echo ${{ secrets.GITHUB_TOKEN }} | apptainer registry login -u ${{ github.actor }} --password-stdin oras://ghcr.io
+          echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
+          
+      - name: Pull Container from GHCR
+        run: |
+          # apptainer pull --force /tmp/runner/LowEFrag.sif oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}
+          IMAGE_URI="oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}"
+          echo "Pulling from: $IMAGE_URI"
+          apptainer pull "${{ inputs.image_name }}" "$IMAGE_URI"          
+
+      - name: Prepare apptainer command
+        run: |
+          cat <<EOF > /tmp/runner/run
+          apptainer run \
+            --unsquash \
+            -B /cvmfs/geant4.cern.ch/share/data:/opt/geant4/data \
+            -B "/tmp/macros:/macro" \
+            -B "/tmp/outputs:/outputs" \
+            /tmp/runner/${{ inputs.image_name }} \
+            "\$@"
+          EOF
+          chmod +x /tmp/runner/run
+          mkdir -p /tmp/outputs /tmp/macros
+
+      - name: Generate macro for this run
+        run: |
+          INMACRO="macro/${{ matrix.macro }}"
+          BASENAME=$(basename "${{ matrix.macro }}" .mac)
+          OUTMACRO="/tmp/macros/${BASENAME}.mac"
+          OUTFILE="/outputs/${BASENAME}.xml"
+
+          # Cambia solo il path di output all'interno della macro,
+          # lasciando invariati eventi, seed, ecc.
+          sed \
+            -e "s|/outputs/.*\.xml|$OUTFILE|" \
+            "$INMACRO" > "$OUTMACRO"
+
+          echo "out_macro=$OUTMACRO" >> $GITHUB_ENV
+          echo "out_basename=$BASENAME" >> $GITHUB_ENV
+
+      - name: Run container with macro
+        run: |
+          cd /tmp/runner
+          MACRO_NAME=$(basename "$out_macro")
+          MACRO_IN_CONTAINER="/macro/$MACRO_NAME"
+          echo "Running ${{ inputs.image_name }} with macro in container: $MACRO_IN_CONTAINER"
+          ./run "$MACRO_IN_CONTAINER"
+
+      - name: Upload output artifact for this macro
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-${{ matrix.macro }}
+          path: /tmp/outputs/$OUT_BASENAME.xml
+        env:
+          OUT_BASENAME: ${{ env.out_basename }} 
