@@ -111,9 +111,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: output-${{ env.out_basename }}
-          path: /tmp/outputs/$OUT_BASENAME.xml
-        env:
-          OUT_BASENAME: ${{ env.out_basename }} 
+          path: /tmp/outputs/${{ env.out_basename }}.xml
 
       - name: Cleanup Apptainer cache in /tmp
         if: always()
