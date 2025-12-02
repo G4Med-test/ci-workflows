@@ -58,7 +58,6 @@ jobs:
       packages: read
     with:
       image_name: ${{ inputs.image_name }}      
-      macro_splits: 5
 
   # parallel:
   #   needs: unit-test-padova
