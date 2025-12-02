@@ -114,3 +114,8 @@ jobs:
           path: /tmp/outputs/$OUT_BASENAME.xml
         env:
           OUT_BASENAME: ${{ env.out_basename }} 
+
+      - name: Cleanup Apptainer cache in /tmp
+        if: always()
+        run: |
+          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true          
