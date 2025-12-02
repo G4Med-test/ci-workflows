@@ -66,10 +66,9 @@ jobs:
           
       - name: Pull Container from GHCR
         run: |
-          # apptainer pull --force /tmp/runner/LowEFrag.sif oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}
           IMAGE_URI="oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}"
           echo "Pulling from: $IMAGE_URI"
-          apptainer pull "${{ inputs.image_name }}" "$IMAGE_URI"          
+          apptainer pull --force /tmp/runner/${{ inputs.image_name }} "$IMAGE_URI"
 
       - name: Prepare apptainer command
         run: |
@@ -92,8 +91,7 @@ jobs:
           OUTMACRO="/tmp/macros/${BASENAME}.mac"
           OUTFILE="/outputs/${BASENAME}.xml"
 
-          # Cambia solo il path di output all'interno della macro,
-          # lasciando invariati eventi, seed, ecc.
+          # Changes output in the nmcro
           sed \
             -e "s|/outputs/.*\.xml|$OUTFILE|" \
             "$INMACRO" > "$OUTMACRO"
@@ -112,7 +110,7 @@ jobs:
       - name: Upload output artifact for this macro
         uses: actions/upload-artifact@v4
         with:
-          name: output-${{ matrix.macro }}
+          name: output-${{ env.out_basename }}
           path: /tmp/outputs/$OUT_BASENAME.xml
         env:
           OUT_BASENAME: ${{ env.out_basename }} 
