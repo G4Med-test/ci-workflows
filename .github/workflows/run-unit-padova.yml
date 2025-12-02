@@ -16,9 +16,6 @@ on:
 jobs:
   test-container-padova:
     runs-on: geant-gha-runner-on-padova
-    permissions:
-      contents: read
-      packages: read 
 
     env:
       APPTAINER_CACHEDIR: /tmp/apptainer_cache
@@ -52,34 +49,29 @@ jobs:
         run: |
           IMAGE_URI="oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}"
           echo "Pulling from: $IMAGE_URI"
-          apptainer pull "${{ inputs.image_name }}" "$IMAGE_URI"
-
-      - name: Restore Geant4 data from cache
-        id: g4data-cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/g4data
-          key: geant4-data-v1
-
-      - name: Download Geant4 data libraries (if cache miss)
-        if: steps.g4data-cache.outputs.cache-hit != 'true'
+          apptainer pull --force /tmp/runner/${{ inputs.image_name }} "$IMAGE_URI"
+          
+      - name: Prepare apptainer command
         run: |
-          mkdir -p /tmp/g4data
-          apptainer exec --unsquash \
-            -B /tmp/g4data:/g4data \
-            "${{ inputs.image_name }}" \
-            bash -c "geant4-config --install-datasets"
-
-      - name: Run Geant4 Simulation
-        run: |
-          echo "Running macro: ${{ inputs.macro_file }}"
+          cat <<EOF > /tmp/runner/run
           apptainer run \
             --unsquash \
-            -B /tmp/g4data:/g4data:ro \
-            -B "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
-            "${{ inputs.image_name }}" \
-            "${GITHUB_WORKSPACE}/${{ inputs.macro_file }}"
+            -B /cvmfs/geant4.cern.ch/share/data:/opt/geant4/data \
+            -B "/tmp/macros:/macro" \
+            -B "/tmp/outputs:/outputs" \
+            /tmp/runner/${{ inputs.image_name }} \
+            "\$@"
+          EOF
+          chmod +x /tmp/runner/run
+          mkdir -p /tmp/outputs /tmp/macros
 
+      - name: Run container with macro
+        run: |
+          echo "Running macro: ${{ inputs.macro_file }}"
+          cd /tmp/runner
+          ./run "${GITHUB_WORKSPACE}/${{ inputs.macro_file }}"
+
+            
       - name: Cleanup Apptainer cache in /tmp
         if: always()
         run: |

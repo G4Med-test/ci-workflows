@@ -38,30 +38,32 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.get-macros.outputs.matrix) }}
+    env:
+      APPTAINER_CACHEDIR: /tmp/apptainer_cache
+      APPTAINER_TMPDIR: /tmp/apptainer_tmp
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set Apptainer Cache and Temp Directories
+      - name: Prepare Apptainer cache in /tmp
         run: |
-          mkdir -p /tmp/apptainer_cache /tmp/apptainer_tmp /tmp/runner
-          echo "APPTAINER_CACHEDIR=/tmp/apptainer_cache" >> $GITHUB_ENV
-          echo "APPTAINER_TMPDIR=/tmp/apptainer_tmp" >> $GITHUB_ENV
-
-      - name: Set tag and repo lowercase
+          mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
+          echo "Using APPTAINER_CACHEDIR=$APPTAINER_CACHEDIR"
+          echo "Using APPTAINER_TMPDIR=$APPTAINER_TMPDIR"
+          df -h /tmp || true
+        
+      - name: Setup Environment Variables
         id: setup
         run: |
-          TAG=${GITHUB_SHA}
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=${repo_lower}" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}        
         run: |
-          # echo ${{ secrets.GITHUB_TOKEN }} | apptainer registry login -u ${{ github.actor }} --password-stdin oras://ghcr.io
           echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
           
       - name: Pull Container from GHCR
