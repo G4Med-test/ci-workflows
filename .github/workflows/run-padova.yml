@@ -107,6 +107,16 @@ jobs:
           echo "Running ${{ inputs.image_name }} with macro in container: $MACRO_IN_CONTAINER"
           ./run "$MACRO_IN_CONTAINER"
 
+      - name: Verify output file was produced
+        run: |
+          OUTPUT_FILE="/tmp/outputs/${{ env.out_basename }}.xml"
+          echo "Checking for output file: $OUTPUT_FILE"
+          if [ ! -f "$OUTPUT_FILE" ]; then
+            echo "ERROR: Expected output file not found: $OUTPUT_FILE" >&2
+            echo "The container run completed, but no output file was produced." >&2
+            exit 1
+          fi
+
       - name: Upload output artifact for this macro
         uses: actions/upload-artifact@v4
         with:
