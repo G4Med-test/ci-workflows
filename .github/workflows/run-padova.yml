@@ -58,6 +58,8 @@ jobs:
           echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
 
       - name: Login to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}        
         run: |
           # echo ${{ secrets.GITHUB_TOKEN }} | apptainer registry login -u ${{ github.actor }} --password-stdin oras://ghcr.io
           echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
