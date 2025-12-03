@@ -1,4 +1,4 @@
-name: run Offloading Padova
+name: Run Offloading Padova
 
 on:
   workflow_call:
@@ -6,8 +6,7 @@ on:
       image_name:
         description: "Name of the .sif container"
         required: true
-        type: string      
-
+        type: string
 
 jobs:
   get-macros:
@@ -128,4 +127,4 @@ jobs:
       - name: Cleanup Apptainer cache in /tmp
         if: always()
         run: |
-          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true          
+          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true

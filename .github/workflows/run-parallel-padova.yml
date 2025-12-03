@@ -1,8 +1,12 @@
-name: INFN run parallel Offloading Padova
+name: Run parallel Offloading Padova
 
 on:
   workflow_call:
     inputs:
+      image_name:
+        description: "Name of the .sif container"
+        required: true
+        type: string      
       macro_splits:
         description: "Number of splits for each macro"
         required: false
@@ -42,33 +46,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.get-macros.outputs.matrix) }}
-
+    env:
+      APPTAINER_CACHEDIR: /tmp/apptainer_cache
+      APPTAINER_TMPDIR: /tmp/apptainer_tmp
+      
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set Apptainer Cache and Temp Directories
+      - name: Prepare Apptainer cache in /tmp
         run: |
-          mkdir -p /tmp/apptainer_cache /tmp/apptainer_tmp /tmp/runner
-          echo "APPTAINER_CACHEDIR=/tmp/apptainer_cache" >> $GITHUB_ENV
-          echo "APPTAINER_TMPDIR=/tmp/apptainer_tmp" >> $GITHUB_ENV
-
-      - name: Set tag and repo lowercase
+          mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
+          echo "Using APPTAINER_CACHEDIR=$APPTAINER_CACHEDIR"
+          echo "Using APPTAINER_TMPDIR=$APPTAINER_TMPDIR"
+          df -h /tmp || true
+        
+      - name: Setup Environment Variables
         id: setup
         run: |
-          TAG=${GITHUB_SHA}  # Changed from workflow_run.head_sha
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=${repo_lower}" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}        
         run: |
-          echo ${{ secrets.GITHUB_TOKEN }} | apptainer registry login -u ${{ github.actor }} --password-stdin oras://ghcr.io
+          echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
 
       - name: Pull Container from GHCR
         run: |
-          apptainer pull --force /tmp/runner/LowEFrag.sif oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}
-
+          IMAGE_URI="oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}"
+          echo "Pulling from: $IMAGE_URI"
+          apptainer pull --force /tmp/runner/${{ inputs.image_name }} "$IMAGE_URI"
+          
       - name: Prepare apptainer command
         run: |
           cat <<EOF > /tmp/runner/run
@@ -77,12 +88,12 @@ jobs:
             -B /cvmfs/geant4.cern.ch/share/data:/opt/geant4/data \
             -B "/tmp/macros:/macro" \
             -B "/tmp/outputs:/outputs" \
-            /tmp/runner/LowEFrag.sif \
+            /tmp/runner/${{ inputs.image_name }} \
             "\$@"
           EOF
           chmod +x /tmp/runner/run
           mkdir -p /tmp/outputs /tmp/macros
-
+          
       - name: Generate modified macro
         run: |
           INMACRO="macro/${{ matrix.macro }}"
@@ -107,12 +118,27 @@ jobs:
           echo "Running LowEFrag with macro in container: $MACRO_IN_CONTAINER"
           ./run "$MACRO_IN_CONTAINER"
 
+      - name: Verify output file was produced
+        run: |
+          OUTPUT_FILE="/tmp/outputs/${{ env.out_basename }}.xml"
+          echo "Checking for output file: $OUTPUT_FILE"
+          if [ ! -f "$OUTPUT_FILE" ]; then
+            echo "ERROR: Expected output file not found: $OUTPUT_FILE" >&2
+            echo "The container run completed, but no output file was produced." >&2
+            exit 1
+          fi          
+          
       - name: Upload output artifact for part
         uses: actions/upload-artifact@v4
         with:
           name: partial-${{ matrix.macro }}-${{ matrix.part }}
           path: /tmp/outputs/part_${{ matrix.part }}.xml
 
+      - name: Cleanup Apptainer cache in /tmp
+        if: always()
+        run: |
+          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true
+          
   merge-parts:
     needs: run-part
     runs-on: geant-gha-runner-on-padova

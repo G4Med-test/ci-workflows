@@ -16,9 +16,6 @@ on:
 jobs:
   test-container:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read 
 
     container:
       image: carlomt/apptainer:1.3.2

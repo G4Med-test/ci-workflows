@@ -50,21 +50,21 @@ jobs:
       image_name: ${{ inputs.image_name }}
       macro_file: ${{ inputs.macro_file }}
       
-  run:
-    needs: unit-test-padova
-    uses: G4Med-test/ci-workflows/.github/workflows/run-padova.yml@main
-    permissions:
-      contents: read
-      packages: read
-    with:
-      image_name: ${{ inputs.image_name }}      
-
-  # parallel:
+  # run:
   #   needs: unit-test-padova
-  #   uses: G4Med-test/ci-workflows/.github/workflows/run-parallel-padova.yml@main
+  #   uses: G4Med-test/ci-workflows/.github/workflows/run-padova.yml@main
   #   permissions:
   #     contents: read
   #     packages: read
   #   with:
   #     image_name: ${{ inputs.image_name }}      
-  #     macro_splits: 5
+
+  parallel:
+    needs: unit-test-padova
+    uses: G4Med-test/ci-workflows/.github/workflows/run-parallel-padova.yml@main
+    permissions:
+      contents: read
+      packages: read
+    with:
+      image_name: ${{ inputs.image_name }}      
+      macro_splits: 5
