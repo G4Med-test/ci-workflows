@@ -100,11 +100,14 @@ jobs:
           OUTMACRO="/tmp/macros/part-${{ matrix.part }}.mac"
           OUTFILE="/outputs/part_${{ matrix.part }}.xml"
           SEED=$((1000 + ${{ matrix.part }}))
-          EVENTS=$((1000000 / ${{ inputs.macro_splits }}))
 
+          TOTAL_EVENTS=$(awk '$1=="/run/beamOn"{print $2; exit}' "$INMACRO")          
+          SPLITS=${{ inputs.macro_splits }}          
+          EVENTS=$((TOTAL_EVENTS / SPLITS))
+          
           sed \
             -e "s|/outputs/.*\.xml|$OUTFILE|" \
-            -e "/\/run\/beamOn/ c\/run/beamOn $EVENTS" \
+            -e "/\/run\/beamOn/ c\/run\/beamOn $EVENTS" \
             -e "\$a\/random/setSeeds $SEED $SEED" \
             "$INMACRO" > "$OUTMACRO"
 
@@ -126,7 +129,7 @@ jobs:
             echo "ERROR: Expected output file not found: $OUTPUT_FILE" >&2
             echo "The container run completed, but no output file was produced." >&2
             exit 1
-          fi          
+          fi
           
       - name: Upload output artifact for part
         uses: actions/upload-artifact@v4
