@@ -141,15 +141,22 @@ jobs:
         if: always()
         run: |
           rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true
-          
+
   merge-parts:
     needs: run-part
     runs-on: geant-gha-runner-on-padova
     if: always()
 
     steps:
-      - name: Checkout repository
+      - name: Checkout caller repository
         uses: actions/checkout@v4
+
+      - name: Checkout ci-workflows repo (for merge_aida.py)
+        uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/ci-workflows
+          ref: main
+          path: ci-workflows
 
       - name: Download all part artifacts
         uses: actions/download-artifact@v4
@@ -176,10 +183,11 @@ jobs:
           echo "Merging the following files:"
           printf '%s\n' $files
 
-          python3 .github/scripts/merge_aida.py $files > merged/merged.xml
+          # lo script viene dal repo della reusable, clonato in ./ci-workflows
+          python3 ci-workflows/.github/scripts/merge_aida.py $files > merged/merged.xml
 
       - name: Upload final merged output
-        if: success() 
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: final-merged-output
