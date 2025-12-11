@@ -149,27 +149,116 @@ jobs:
         run: |
           rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true
 
-  merge-parts:
-    needs: run-part
+  run-part:
+    needs: get-macros
     runs-on: geant-gha-runner-on-padova
-    if: always()
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.get-macros.outputs.matrix) }}
 
     steps:
-      - name: Checkout caller repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout ci-workflows repo (for merge_aida.py)
-        uses: actions/checkout@v4
-        with:
-          repository: G4Med-test/ci-workflows
-          ref: main
-          path: ci-workflows
+      - name: Prepare working dir and Apptainer cache in /tmp
+        run: |
+          PART=${{ matrix.part }}
+          BASE="/tmp/apptainer_${{ github.run_id }}_${PART}"
+          WORKDIR="/tmp/runner_${{ github.run_id }}_${PART}"
 
-      - name: Download all part artifacts
-        uses: actions/download-artifact@v4
+          echo "APPTAINER_CACHEDIR=$BASE/cache" >> $GITHUB_ENV
+          echo "APPTAINER_TMPDIR=$BASE/tmp" >> $GITHUB_ENV
+          echo "WORKDIR=$WORKDIR" >> $GITHUB_ENV
+
+          mkdir -p "$BASE/cache" "$BASE/tmp" "$WORKDIR"
+          echo "Using APPTAINER_CACHEDIR=$BASE/cache"
+          echo "Using APPTAINER_TMPDIR=$BASE/tmp"
+          echo "Using WORKDIR=$WORKDIR"
+          df -h /tmp || true
+
+      - name: Setup Environment Variables
+        id: setup
+        run: |
+          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=${repo_lower}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
+
+      - name: Pull Container from GHCR
+        run: |
+          IMAGE_URI="oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}"
+          echo "Pulling from: $IMAGE_URI"
+          apptainer pull --force "$WORKDIR/${{ inputs.image_name }}" "$IMAGE_URI"
+
+      - name: Prepare apptainer command
+        run: |
+          cat <<EOF > "$WORKDIR/run"
+          apptainer run \
+            --unsquash \
+            -B /cvmfs/geant4.cern.ch/share/data:/opt/geant4/data \
+            -B "/tmp/macros:/macro" \
+            -B "/tmp/outputs:/outputs" \
+            "$WORKDIR/${{ inputs.image_name }}" \
+            "\$@"
+          EOF
+          chmod +x "$WORKDIR/run"
+          mkdir -p /tmp/outputs /tmp/macros
+
+      - name: Generate modified macro
+        run: |
+          INMACRO="macro/${{ matrix.macro }}"
+          PART=${{ matrix.part }}
+          OUTMACRO="/tmp/macros/part-${PART}.mac"
+          OUTFILE="/outputs/part_${PART}.xml"
+          SEED=$((1000 + PART))
+
+          TOTAL_EVENTS=$(awk '$1=="/run/beamOn"{print $2; exit}' "$INMACRO")
+          SPLITS=${{ inputs.macro_splits }}
+          EVENTS=$((TOTAL_EVENTS / SPLITS))
+
+          sed \
+            -e "s|/outputs/.*\.xml|$OUTFILE|" \
+            -e "/\/run\/beamOn/ c\/run\/beamOn $EVENTS" \
+            -e "\$a\/random/setSeeds $SEED $SEED" \
+            "$INMACRO" > "$OUTMACRO"
+
+          echo "out_macro=$OUTMACRO" >> $GITHUB_ENV
+          echo "out_basename=part_${PART}" >> $GITHUB_ENV
+
+      - name: Run container with modified macro
+        run: |
+          mkdir -p "$APPTAINER_TMPDIR"
+          cd "$WORKDIR"
+          MACRO_NAME=$(basename "$out_macro")
+          MACRO_IN_CONTAINER="/macro/$MACRO_NAME"
+          echo "Running LowEFrag with macro in container: $MACRO_IN_CONTAINER"
+          ./run "$MACRO_IN_CONTAINER"
+
+      - name: Verify output file was produced
+        run: |
+          OUTPUT_FILE="/tmp/outputs/${{ env.out_basename }}.xml"
+          echo "Checking for output file: $OUTPUT_FILE"
+          if [ ! -f "$OUTPUT_FILE" ]; then
+            echo "ERROR: Expected output file not found: $OUTPUT_FILE" >&2
+            echo "The container run completed, but no output file was produced." >&2
+            exit 1
+          fi
+
+      - name: Upload output artifact for part
+        uses: actions/upload-artifact@v4
         with:
-          path: artifacts
-        continue-on-error: true   
+          name: partial-${{ matrix.macro }}-${{ matrix.part }}
+          path: /tmp/outputs/part_${{ matrix.part }}.xml
+
+      - name: Cleanup Apptainer cache in /tmp
+        if: always()
+        run: |
+          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" "$WORKDIR" || true          
 
       - name: Merge AIDA XML outputs
         run: |
