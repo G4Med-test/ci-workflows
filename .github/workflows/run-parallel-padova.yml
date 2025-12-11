@@ -26,17 +26,16 @@ jobs:
         id: expand
         run: |
           PARTS=${{ inputs.macro_splits }}
-          # List all .mac files excluding macro/unit.mac
+          # All the .mac except macro/unit.mac
           MACROS=$(find macro/ -name "*.mac" -type f -printf '%P\n' | grep -v "^unit\.mac$")
 
-          # Build a JSON object with an "include" array for the dynamic matrix
           MATRIX='{"include":['
           for MACRO in $MACROS; do
             for i in $(seq 0 $((PARTS-1))); do
               MATRIX="$MATRIX{\"macro\":\"$MACRO\",\"part\":$i},"
             done
           done
-          MATRIX="${MATRIX%,}]}"   # close the array and the object
+          MATRIX="${MATRIX%,}]}"
 
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
@@ -128,7 +127,7 @@ jobs:
           cd "$WORKDIR"
           MACRO_NAME=$(basename "$out_macro")
           MACRO_IN_CONTAINER="/macro/$MACRO_NAME"
-          echo "Running LowEFrag with macro in container: $MACRO_IN_CONTAINER"
+          echo "Running ${{ inputs.image_name }} with macro in container: $MACRO_IN_CONTAINER"
           ./run "$MACRO_IN_CONTAINER"
 
       - name: Verify output file was produced
@@ -150,7 +149,29 @@ jobs:
       - name: Cleanup Apptainer cache in /tmp
         if: always()
         run: |
-          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" "$WORKDIR" || true          
+          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" "$WORKDIR" || true
+
+  merge-parts:
+    needs: run-part
+    runs-on: geant-gha-runner-on-padova
+    if: always()
+
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+
+      - name: Checkout ci-workflows repo (for merge_aida.py)
+        uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/ci-workflows
+          ref: main
+          path: ci-workflows
+
+      - name: Download all part artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+        continue-on-error: true   
 
       - name: Merge AIDA XML outputs
         run: |
@@ -171,7 +192,7 @@ jobs:
           echo "Merging the following files:"
           printf '%s\n' $files
 
-          # lo script viene dal repo della reusable, clonato in ./ci-workflows
+          # script from the actions repo
           python3 ci-workflows/.github/scripts/merge_aida.py $files > merged/merged.xml
 
       - name: Upload final merged output
