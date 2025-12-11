@@ -20,14 +20,14 @@ jobs:
       - name: List macro files and expand matrix
         id: expand
         run: |
-          # Lista tutti i .mac tranne macro/unit.mac
+          # List all .mac files excluding macro/unit.mac
           MACROS=$(find macro/ -name "*.mac" -type f -printf '%P\n' | grep -v "^unit\.mac$")
 
           MATRIX='{"include":['
           for MACRO in $MACROS; do
             MATRIX="$MATRIX{\"macro\":\"$MACRO\"},"
           done
-          MATRIX="${MATRIX%,}]}"   # chiude l'array e l'oggetto
+          MATRIX="${MATRIX%,}]}"   # close the array and the object 
 
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 

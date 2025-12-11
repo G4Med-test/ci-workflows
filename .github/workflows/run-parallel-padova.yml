@@ -26,7 +26,7 @@ jobs:
         id: expand
         run: |
           PARTS=${{ inputs.macro_splits }}
-          # List all .mac files excluding macro/unit.mac          
+          # List all .mac files excluding macro/unit.mac
           MACROS=$(find macro/ -name "*.mac" -type f -printf '%P\n' | grep -v "^unit\.mac$")
 
           # Build a JSON object with an "include" array for the dynamic matrix
@@ -46,21 +46,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.get-macros.outputs.matrix) }}
-    env:
-      APPTAINER_CACHEDIR: /tmp/apptainer_cache
-      APPTAINER_TMPDIR: /tmp/apptainer_tmp
-      
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Prepare Apptainer cache in /tmp
         run: |
-          mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
-          echo "Using APPTAINER_CACHEDIR=$APPTAINER_CACHEDIR"
-          echo "Using APPTAINER_TMPDIR=$APPTAINER_TMPDIR"
+          # Directory per-job (diverse per ogni combinazione di matrix)
+          BASE="/tmp/apptainer_${{ github.run_id }}_${{ matrix.part }}"
+          echo "APPTAINER_CACHEDIR=$BASE/cache" >> $GITHUB_ENV
+          echo "APPTAINER_TMPDIR=$BASE/tmp" >> $GITHUB_ENV
+          mkdir -p "$BASE/cache" "$BASE/tmp"
+          echo "Using APPTAINER_CACHEDIR=$BASE/cache"
+          echo "Using APPTAINER_TMPDIR=$BASE/tmp"
           df -h /tmp || true
-        
+
       - name: Setup Environment Variables
         id: setup
         run: |
@@ -70,7 +71,7 @@ jobs:
 
       - name: Login to GHCR
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}        
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
 
@@ -78,8 +79,9 @@ jobs:
         run: |
           IMAGE_URI="oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}"
           echo "Pulling from: $IMAGE_URI"
+          mkdir -p /tmp/runner
           apptainer pull --force /tmp/runner/${{ inputs.image_name }} "$IMAGE_URI"
-          
+
       - name: Prepare apptainer command
         run: |
           cat <<EOF > /tmp/runner/run
@@ -93,18 +95,19 @@ jobs:
           EOF
           chmod +x /tmp/runner/run
           mkdir -p /tmp/outputs /tmp/macros
-          
+
       - name: Generate modified macro
         run: |
           INMACRO="macro/${{ matrix.macro }}"
-          OUTMACRO="/tmp/macros/part-${{ matrix.part }}.mac"
-          OUTFILE="/outputs/part_${{ matrix.part }}.xml"
-          SEED=$((1000 + ${{ matrix.part }}))
+          PART=${{ matrix.part }}
+          OUTMACRO="/tmp/macros/part-${PART}.mac"
+          OUTFILE="/outputs/part_${PART}.xml"
+          SEED=$((1000 + PART))
 
-          TOTAL_EVENTS=$(awk '$1=="/run/beamOn"{print $2; exit}' "$INMACRO")          
-          SPLITS=${{ inputs.macro_splits }}          
+          TOTAL_EVENTS=$(awk '$1=="/run/beamOn"{print $2; exit}' "$INMACRO")
+          SPLITS=${{ inputs.macro_splits }}
           EVENTS=$((TOTAL_EVENTS / SPLITS))
-          
+
           sed \
             -e "s|/outputs/.*\.xml|$OUTFILE|" \
             -e "/\/run\/beamOn/ c\/run\/beamOn $EVENTS" \
@@ -112,9 +115,13 @@ jobs:
             "$INMACRO" > "$OUTMACRO"
 
           echo "out_macro=$OUTMACRO" >> $GITHUB_ENV
+          echo "out_basename=part_${PART}" >> $GITHUB_ENV
 
       - name: Run container with modified macro
         run: |
+          # Di nuovo, per sicurezza, assicurati che esista la dir TMP
+          mkdir -p "$APPTAINER_TMPDIR"
+
           cd /tmp/runner
           MACRO_NAME=$(basename "$out_macro")
           MACRO_IN_CONTAINER="/macro/$MACRO_NAME"
@@ -130,7 +137,7 @@ jobs:
             echo "The container run completed, but no output file was produced." >&2
             exit 1
           fi
-          
+
       - name: Upload output artifact for part
         uses: actions/upload-artifact@v4
         with:
