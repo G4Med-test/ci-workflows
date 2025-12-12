@@ -30,7 +30,11 @@ for name, bins in histos.items():
     print(f'  <histogram1d name="{name}" path="/" title="{name}">')
     print(f'    <axis direction="x"/>')
     print(f'    <data1d>')
-    for binNum, values in sorted(bins.items(), key=lambda x: int(x[0]) if x[0].isdigit() else x[0]):
+    # ✅ chiave uniforme: (0, int(bin)) per numerici, (1, stringa) per il resto
+    for binNum, values in sorted(
+        bins.items(),
+        key=lambda x: (0, int(x[0])) if x[0].isdigit() else (1, x[0])
+    ):
         height = values["height"]
         error = math.sqrt(values["error2"])
         entries = values["entries"]

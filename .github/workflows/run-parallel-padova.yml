@@ -182,18 +182,51 @@ jobs:
             exit 0
           fi
 
-          files=$(find artifacts -name '*.xml' -print)
+          files=$(find artifacts -name 'part_*.xml' -print)
 
           if [ -z "$files" ]; then
             echo "No XML files found in artifacts, nothing to merge."
             exit 0
           fi
 
-          echo "Merging the following files:"
+          echo "Found the following XML files:"
           printf '%s\n' $files
 
-          # script from the actions repo
-          python3 ci-workflows/.github/scripts/merge_aida.py $files > merged/merged.xml
+          macros=$(
+            for f in $files; do
+              dir=$(dirname "$f")       # es. artifacts/partial-incl.mac-3
+              base=${dir##*/}          # es. partial-incl.mac-3
+              mac=${base#partial-}     # es. incl.mac-3
+              mac=${mac%-*}            # es. incl.mac
+              echo "$mac"
+            done | sort -u
+          )
+
+          echo "Merging per macro:"
+          printf '  %s\n' $macros
+
+          for mac in $macros; do
+            echo "----"
+            echo "Merging macro: $mac"
+
+            macro_files=$(
+              for f in $files; do
+                dir=$(dirname "$f")
+                base=${dir##*/}
+                this_mac=${base#partial-}
+                this_mac=${this_mac%-*}
+                if [ "$this_mac" = "$mac" ]; then
+                  echo "$f"
+                fi
+              done
+            )
+
+            echo "  Using files:"
+            printf '    %s\n' $macro_files
+
+            python3 ci-workflows/.github/scripts/merge_aida.py $macro_files > "merged/${mac}.xml"
+          done
+
 
       - name: Upload final merged output
         if: success()
