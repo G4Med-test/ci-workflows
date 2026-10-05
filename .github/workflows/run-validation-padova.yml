@@ -1,0 +1,148 @@
+name: Run validation and export portal JSON
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: "oras:// reference of the SIF pushed by the build"
+        required: true
+        type: string
+      validation_config:
+        description: Validation manifest; validation is skipped if the file does not exist
+        default: validation/config.json
+        type: string
+      validation_tools_ref:
+        description: Ref of ci-workflows containing validation/export.py
+        default: main
+        type: string
+
+jobs:
+  get-macros:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      enabled: ${{ steps.matrix.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/ci-workflows
+          ref: ${{ inputs.validation_tools_ref }}
+          path: ci-tools
+      - name: Validate configuration and build matrix
+        id: matrix
+        env:
+          CONFIG: ${{ inputs.validation_config }}
+        run: |
+          if [[ ! -f "$CONFIG" ]]; then
+            echo "::notice::$CONFIG not found: validation skipped"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          matrix=$(python3 ci-tools/validation/export.py matrix --config "$CONFIG")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+  # The macro runs unchanged in an empty directory, bound at /outputs and used as
+  # working directory: parsers find relative (or /outputs/...) files there.
+  run-macro:
+    needs: get-macros
+    if: needs.get-macros.outputs.enabled == 'true'
+    runs-on: geant-gha-runner-on-padova
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.get-macros.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      MACRO: ${{ matrix.macro }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/ci-workflows
+          ref: ${{ inputs.validation_tools_ref }}
+          path: ci-tools
+      - name: Create isolated working directories
+        run: |
+          work=$(mktemp -d "$RUNNER_TEMP/geant-validation.XXXXXXXX")
+          mkdir -p "$work/cache" "$work/tmp" "$work/outputs" "$work/macros"
+          cp "macro/$MACRO" "$work/macros/"
+          echo "VALIDATION_WORK=$work" >> "$GITHUB_ENV"
+          echo "APPTAINER_CACHEDIR=$work/cache" >> "$GITHUB_ENV"
+          echo "APPTAINER_TMPDIR=$work/tmp" >> "$GITHUB_ENV"
+      - name: Pull simulation container
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ inputs.image }}
+        run: |
+          echo "$GITHUB_TOKEN" | apptainer registry login -u "$GITHUB_ACTOR" --password-stdin oras://ghcr.io
+          apptainer pull "$VALIDATION_WORK/simulation.sif" "$IMAGE"
+      - name: Run simulation and capture stdout
+        run: |
+          set -euo pipefail
+          apptainer run --unsquash \
+            -B /cvmfs/geant4.cern.ch/share/data:/g4data:ro \
+            -B "$VALIDATION_WORK/macros:/macro:ro" \
+            -B "$VALIDATION_WORK/outputs:/outputs" \
+            --pwd /outputs "$VALIDATION_WORK/simulation.sif" "/macro/$(basename "$MACRO")" \
+            > "$VALIDATION_WORK/outputs/test_stdout.txt" \
+            2> "$VALIDATION_WORK/outputs/test_stderr.txt"
+          if grep -E 'COMMAND NOT FOUND|Batch is interrupted|Fatal Exception|Fatal Error In Argument' \
+              "$VALIDATION_WORK/outputs/test_stdout.txt" "$VALIDATION_WORK/outputs/test_stderr.txt"; then
+            echo 'Geant4 reported an error; refusing to export results.' >&2
+            exit 1
+          fi
+      - name: Export validation JSON inside the simulation container
+        env:
+          CONFIG: ${{ inputs.validation_config }}
+        run: |
+          apptainer exec --unsquash \
+            -B "$GITHUB_WORKSPACE:/validation:ro" \
+            -B "$VALIDATION_WORK:/work" \
+            --pwd /validation "$VALIDATION_WORK/simulation.sif" \
+            /opt/venv/bin/python3 /validation/ci-tools/validation/export.py export \
+            --repo /validation --config "$CONFIG" --macro "$MACRO" \
+            --input /work/outputs --output /work/json
+      - name: Upload JSON for this macro
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-json-${{ matrix.id }}
+          path: ${{ env.VALIDATION_WORK }}/json/
+          if-no-files-found: error
+      - name: Upload raw output and executed macro
+        if: ${{ always() && env.VALIDATION_WORK != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-raw-${{ matrix.id }}
+          path: |
+            ${{ env.VALIDATION_WORK }}/outputs/
+            ${{ env.VALIDATION_WORK }}/macros/
+          if-no-files-found: warn
+      - name: Clean this job's temporary files
+        if: ${{ always() && env.VALIDATION_WORK != '' }}
+        run: rm -rf -- "$VALIDATION_WORK"
+
+  collect-json:
+    needs: run-macro
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/ci-workflows
+          ref: ${{ inputs.validation_tools_ref }}
+          path: ci-tools
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: validation-json-*
+          path: validation-input
+      - name: Collect all macro results
+        run: |
+          python3 ci-tools/validation/export.py collect \
+            --input validation-input --output validation-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validation-json
+          path: validation-output/
+          if-no-files-found: error

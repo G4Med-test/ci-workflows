@@ -3,8 +3,8 @@ name: Run Unit Tests Offloading Padova
 on:
   workflow_call:
     inputs:
-      image_name:
-        description: "Name of the .sif container"
+      image:
+        description: "oras:// reference of the SIF pushed by the build"
         required: true
         type: string
       macro_file:
@@ -16,63 +16,42 @@ on:
 jobs:
   test-container-padova:
     runs-on: geant-gha-runner-on-padova
-
-    env:
-      APPTAINER_CACHEDIR: /tmp/apptainer_cache
-      APPTAINER_TMPDIR: /tmp/apptainer_tmp
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Prepare Apptainer cache in /tmp
+      # The runner is shared: every job gets its own image, cache and output directory.
+      - name: Create isolated working directories
         run: |
-          mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
-          echo "Using APPTAINER_CACHEDIR=$APPTAINER_CACHEDIR"
-          echo "Using APPTAINER_TMPDIR=$APPTAINER_TMPDIR"
-          df -h /tmp || true
-
-      - name: Setup Environment Variables
-        id: setup
-        run: |
-          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "repo_lower=${repo_lower}" >> "$GITHUB_OUTPUT"
-
-      - name: Login to GHCR
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
+          work=$(mktemp -d "$RUNNER_TEMP/geant-unit.XXXXXXXX")
+          mkdir -p "$work/cache" "$work/tmp" "$work/outputs"
+          echo "UNIT_WORK=$work" >> "$GITHUB_ENV"
+          echo "APPTAINER_CACHEDIR=$work/cache" >> "$GITHUB_ENV"
+          echo "APPTAINER_TMPDIR=$work/tmp" >> "$GITHUB_ENV"
 
       - name: Pull Container from GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ inputs.image }}
         run: |
-          IMAGE_URI="oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}"
-          echo "Pulling from: $IMAGE_URI"
-          apptainer pull --force /tmp/runner/${{ inputs.image_name }} "$IMAGE_URI"
-          
-      - name: Prepare apptainer command
-        run: |
-          cat <<EOF > /tmp/runner/run
-          apptainer run \
-            --unsquash \
-            -B /cvmfs/geant4.cern.ch/share/data:/opt/geant4/data \
-            -B "/tmp/macros:/macro" \
-            -B "/tmp/outputs:/outputs" \
-            /tmp/runner/${{ inputs.image_name }} \
-            "\$@"
-          EOF
-          chmod +x /tmp/runner/run
-          mkdir -p /tmp/outputs /tmp/macros
+          echo "$GITHUB_TOKEN" | apptainer registry login -u "$GITHUB_ACTOR" --password-stdin oras://ghcr.io
+          echo "Pulling from: $IMAGE"
+          apptainer pull "$UNIT_WORK/simulation.sif" "$IMAGE"
 
       - name: Run container with macro
         run: |
           echo "Running macro: ${{ inputs.macro_file }}"
-          cd /tmp/runner
-          ./run "${GITHUB_WORKSPACE}/${{ inputs.macro_file }}"
+          cd "$UNIT_WORK/outputs"
+          apptainer run --unsquash \
+            -B /cvmfs/geant4.cern.ch/share/data:/g4data:ro \
+            -B "$UNIT_WORK/outputs:/outputs" \
+            "$UNIT_WORK/simulation.sif" \
+            "${GITHUB_WORKSPACE}/${{ inputs.macro_file }}"
 
-            
-      - name: Cleanup Apptainer cache in /tmp
-        if: always()
-        run: |
-          rm -rf "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" || true
+      - name: Clean this job's temporary files
+        if: ${{ always() && env.UNIT_WORK != '' }}
+        run: rm -rf -- "$UNIT_WORK"

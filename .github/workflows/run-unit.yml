@@ -3,8 +3,8 @@ name: Run Unit Tests
 on:
   workflow_call:
     inputs:
-      image_name:
-        description: "Name of the .sif container"
+      image:
+        description: "oras:// reference of the SIF pushed by the build"
         required: true
         type: string
       macro_file:
@@ -15,22 +15,17 @@ on:
 
 jobs:
   test-container:
-    runs-on: ubuntu-latest
-
-    container:
-      image: carlomt/apptainer:1.3.2
-      options: --privileged
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Environment Variables
-        id: setup
+      - name: Install Apptainer on the runner
         run: |
-          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "repo_lower=${repo_lower}" >> "$GITHUB_OUTPUT"
+          sudo add-apt-repository -y ppa:apptainer/ppa
+          sudo apt-get update
+          sudo apt-get install -y apptainer
 
       - name: Login to GHCR
         env:
@@ -39,33 +34,35 @@ jobs:
           echo "$GITHUB_TOKEN" | apptainer registry login -u "${{ github.actor }}" --password-stdin oras://ghcr.io
 
       - name: Pull Container from GHCR
+        id: pull
+        env:
+          IMAGE: ${{ inputs.image }}
         run: |
-          IMAGE_URI="oras://ghcr.io/${{ steps.setup.outputs.repo_lower }}:${{ steps.setup.outputs.tag }}"
-          echo "Pulling from: $IMAGE_URI"
-          apptainer pull "${{ inputs.image_name }}" "$IMAGE_URI"
+          echo "Pulling from: $IMAGE"
+          apptainer pull simulation.sif "$IMAGE"
+          echo "geant4_version=$(sudo apptainer exec --unsquash simulation.sif geant4-config --version)" >> "$GITHUB_OUTPUT"
 
+      # Datasets depend on the Geant4 version of the image.
       - name: Restore Geant4 data from cache
         id: g4data-cache
         uses: actions/cache@v4
         with:
           path: /tmp/g4data
-          key: geant4-data-v1
+          key: geant4-data-${{ steps.pull.outputs.geant4_version }}
 
       - name: Download Geant4 data libraries (if cache miss)
         if: steps.g4data-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p /tmp/g4data
-          # Nota: Usiamo l'immagine scaricata per lanciare geant4-config
-          apptainer exec --unsquash -B /tmp/g4data:/g4data \
-            "${{ inputs.image_name }}" \
+          sudo apptainer exec --unsquash -B /tmp/g4data:/g4data \
+            simulation.sif \
             bash -c "geant4-config --install-datasets"
 
       - name: Run Geant4 Simulation
         run: |
           echo "Running macro: ${{ inputs.macro_file }}"
-          
-          apptainer run \
+          sudo apptainer run \
             --unsquash \
             -B /tmp/g4data:/g4data:ro \
-            "${{ inputs.image_name }}" \
+            simulation.sif \
             "${GITHUB_WORKSPACE}/${{ inputs.macro_file }}"

@@ -3,9 +3,6 @@ name: Pipeline
 on:
   workflow_call:
     inputs:
-      image_name:
-        required: true
-        type: string
       apptainer_def:
         required: false
         default: "Apptainer.def"
@@ -15,56 +12,56 @@ on:
         default: "macro/unit.mac"
         type: string
       geant4_tag:
+        description: geant4-alma9 tag to build with; empty uses the TAG default of Apptainer.def
         required: false
-        default: "11.3.2-almalinux9"
+        default: ""
+        type: string
+      validation_config:
+        description: Validation manifest; validation is skipped if the file does not exist
+        default: validation/config.json
+        type: string
+      validation_tools_ref:
+        description: ci-workflows ref for the shared JSON exporter
+        default: main
         type: string
 
 jobs:
   build:
-    uses: G4Med-test/ci-workflows/.github/workflows/apptainer-build-deploy.yml@main
+    uses: ./.github/workflows/apptainer-build-deploy.yml
     permissions:
       contents: read
       packages: write
     with:
       apptainer_def: ${{ inputs.apptainer_def }}
-      image_name: ${{ inputs.image_name }}
       geant4_tag: ${{ inputs.geant4_tag }}
 
   unit-test:
     needs: build
-    uses: G4Med-test/ci-workflows/.github/workflows/run-unit.yml@main
+    uses: ./.github/workflows/run-unit.yml
     permissions:
       contents: read
       packages: read
     with:
-      image_name: ${{ inputs.image_name }}
+      image: ${{ needs.build.outputs.image }}
       macro_file: ${{ inputs.macro_file }}
 
   unit-test-padova:
     needs: build
-    uses: G4Med-test/ci-workflows/.github/workflows/run-unit-padova.yml@main
+    uses: ./.github/workflows/run-unit-padova.yml
     permissions:
       contents: read
       packages: read
     with:
-      image_name: ${{ inputs.image_name }}
+      image: ${{ needs.build.outputs.image }}
       macro_file: ${{ inputs.macro_file }}
-      
-  run:
-    needs: unit-test-padova
-    uses: G4Med-test/ci-workflows/.github/workflows/run-padova.yml@main
+
+  validation:
+    needs: [build, unit-test, unit-test-padova]
+    uses: ./.github/workflows/run-validation-padova.yml
     permissions:
       contents: read
       packages: read
     with:
-      image_name: ${{ inputs.image_name }}      
-
-  # parallel:
-  #   needs: unit-test-padova
-  #   uses: G4Med-test/ci-workflows/.github/workflows/run-parallel-padova.yml@main
-  #   permissions:
-  #     contents: read
-  #     packages: read
-  #   with:
-  #     image_name: ${{ inputs.image_name }}      
-  #     macro_splits: 5
+      image: ${{ needs.build.outputs.image }}
+      validation_config: ${{ inputs.validation_config }}
+      validation_tools_ref: ${{ inputs.validation_tools_ref }}
