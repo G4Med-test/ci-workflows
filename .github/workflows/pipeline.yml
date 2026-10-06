@@ -61,6 +61,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: write
     with:
       image: ${{ needs.build.outputs.image }}
       validation_config: ${{ inputs.validation_config }}
