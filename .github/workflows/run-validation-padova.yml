@@ -203,8 +203,22 @@ jobs:
           body: "Source: ${{ github.repository }}@${{ github.sha }}"
           branch: results/${{ steps.test.outputs.name }}
           delete-branch: true
-      - name: Enable auto-merge
+      - name: Merge pull request
+        # gh pr merge --auto needs a branch protection rule with a required
+        # check/review to make sense of "wait, then merge"; this repo has
+        # none, so merge directly instead, retrying while GitHub is still
+        # computing mergeability right after the PR was (re)created.
         if: steps.pr.outputs.pull-request-number
         env:
           GH_TOKEN: ${{ secrets.VALIDATION_RESULTS_TOKEN }}
-        run: gh pr merge --auto --squash "${{ steps.pr.outputs.pull-request-url }}"
+        run: |
+          set -eu
+          for attempt in $(seq 1 10); do
+            if gh pr merge --squash --delete-branch "${{ steps.pr.outputs.pull-request-url }}"; then
+              exit 0
+            fi
+            echo "Not mergeable yet, retrying in 5s (attempt $attempt/10)..." >&2
+            sleep 5
+          done
+          echo "Giving up: PR never became mergeable." >&2
+          exit 1
