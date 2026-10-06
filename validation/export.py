@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -27,6 +28,24 @@ def geant4_version():
                               capture_output=True, text=True).stdout.strip()
     except FileNotFoundError:
         raise SystemExit("geant4-config not found: run inside the test container or pass --version")
+
+
+def git_provenance():
+    """Test repository and commit that produced this export, from the Actions environment."""
+    repo, sha = os.environ.get("GITHUB_REPOSITORY"), os.environ.get("GITHUB_SHA")
+    return {"url": "https://github.com/" + repo, "sha": sha} if repo and sha else None
+
+
+def container_provenance():
+    """Container recipe and Geant4 commit, from the OCI labels baked into the image."""
+    path = Path("/.singularity.d/labels.json")
+    if not path.exists():
+        return None
+    labels = json.loads(path.read_text())
+    url, sha = labels.get("org.opencontainers.image.source"), labels.get("org.opencontainers.image.revision")
+    if not (url and sha):
+        return None
+    return {"url": url, "sha": sha, "geant4_commit": labels.get("org.g4med.geant4.commit")}
 
 
 def validate_record(record):
@@ -119,14 +138,24 @@ def export(args):
     records = list(parser.parse(job))
     write_results(records, args.output)
     (args.output / "job.json").write_text(json.dumps(job, indent=2) + "\n")
+    provenance = {"test_repo": git_provenance(), "container_repo": container_provenance(),
+                  "image": os.environ.get("IMAGE"), "geant4_version": version}
+    (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     print("Exported %d plots to %s" % (len(records), args.output))
 
 
 def collect(args):
     records = []
+    provenance = None
     for path in sorted(args.input.glob("*/results.json")):
         records.extend(json.loads(path.read_text()))
+        if provenance is None:
+            prov_path = path.parent / "provenance.json"
+            if prov_path.exists():
+                provenance = json.loads(prov_path.read_text())
     write_results(records, args.output)
+    if provenance:
+        (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
 
 
 def main():

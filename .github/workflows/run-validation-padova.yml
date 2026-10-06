@@ -97,6 +97,7 @@ jobs:
       - name: Export validation JSON inside the simulation container
         env:
           CONFIG: ${{ inputs.validation_config }}
+          IMAGE: ${{ inputs.image }}
         run: |
           apptainer exec --unsquash \
             -B "$GITHUB_WORKSPACE:/validation:ro" \
@@ -127,6 +128,8 @@ jobs:
   collect-json:
     needs: run-macro
     runs-on: ubuntu-24.04
+    permissions:
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,3 +149,58 @@ jobs:
           name: validation-json
           path: validation-output/
           if-no-files-found: error
+      - name: Delete per-macro artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/actions/artifacts" --paginate \
+            --jq '.artifacts[] | select(.workflow_run.id == ${{ github.run_id }}) | select(.name | test("^validation-(json|raw)-")) | .id' \
+          | xargs -r -I{} gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/{}"
+
+  # Publishes to G4Med-test/validation-results via PR instead of pushing directly,
+  # so a bad export never lands on its default branch unreviewed-but-unblocked.
+  # The concurrency group serializes runs of the *same* test repo: two overlapping
+  # runs would otherwise overwrite the same path with different content and the
+  # second PR could not auto-merge (real conflict, not just a stale branch).
+  publish-results:
+    needs: collect-json
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: validation-results-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Determine test name
+        id: test
+        run: echo "name=$(basename '${{ github.repository }}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: validation-json
+          path: validation-output
+      - uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/validation-results
+          token: ${{ secrets.VALIDATION_RESULTS_TOKEN }}
+          path: validation-results
+      - name: Replace this test's results
+        run: |
+          set -euo pipefail
+          rm -rf "validation-results/${{ steps.test.outputs.name }}"
+          mkdir -p "validation-results/${{ steps.test.outputs.name }}"
+          cp -r validation-output/. "validation-results/${{ steps.test.outputs.name }}/"
+      - name: Open pull request
+        id: pr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.VALIDATION_RESULTS_TOKEN }}
+          path: validation-results
+          add-paths: ${{ steps.test.outputs.name }}
+          commit-message: "${{ steps.test.outputs.name }}: update results"
+          title: "${{ steps.test.outputs.name }}: update results"
+          body: "Source: ${{ github.repository }}@${{ github.sha }}"
+          branch: results/${{ steps.test.outputs.name }}
+          delete-branch: true
+      - name: Enable auto-merge
+        if: steps.pr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.VALIDATION_RESULTS_TOKEN }}
+        run: gh pr merge --auto --squash "${{ steps.pr.outputs.pull-request-url }}"
