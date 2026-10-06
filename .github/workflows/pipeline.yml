@@ -24,6 +24,10 @@ on:
         description: ci-workflows ref for the shared JSON exporter
         default: main
         type: string
+    secrets:
+      VALIDATION_RESULTS_TOKEN:
+        description: PAT with contents/pull-requests write on G4Med-test/validation-results
+        required: true
 
 jobs:
   build:
@@ -62,6 +66,8 @@ jobs:
       contents: read
       packages: read
       actions: write
+    secrets:
+      VALIDATION_RESULTS_TOKEN: ${{ secrets.VALIDATION_RESULTS_TOKEN }}
     with:
       image: ${{ needs.build.outputs.image }}
       validation_config: ${{ inputs.validation_config }}

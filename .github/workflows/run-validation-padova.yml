@@ -15,6 +15,10 @@ on:
         description: Ref of ci-workflows containing validation/export.py
         default: main
         type: string
+    secrets:
+      VALIDATION_RESULTS_TOKEN:
+        description: PAT with contents/pull-requests write on G4Med-test/validation-results
+        required: true
 
 jobs:
   get-macros:
