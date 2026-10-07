@@ -14,17 +14,28 @@ on:
         type: string
     outputs:
       image:
-        description: "oras:// reference of the pushed SIF, used by the test jobs"
-        value: ${{ jobs.build-test-container.outputs.image }}
+        description: "oras:// reference of the pushed multi-arch SIF, used by the test jobs"
+        value: ${{ jobs.index.outputs.image }}
 
 jobs:
+  # Each architecture is built and tested on a native runner (no emulation) and
+  # pushed as :<tag>-<arch>; the index job below publishes :<tag> for both.
   build-test-container:
-    runs-on: ubuntu-24.04
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
-    outputs:
-      image: ${{ steps.push.outputs.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            host_arch: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            host_arch: aarch64
 
     steps:
       - name: Check out repository
@@ -59,18 +70,48 @@ jobs:
             simulation.sif \
             "${{ inputs.apptainer_def }}"
 
+      - name: Check the built image matches the runner architecture
+        run: |
+          built="$(sudo apptainer exec --unsquash simulation.sif uname -m)"
+          test "$built" = "${{ matrix.host_arch }}"
+
       # <commit SHA>, or <commit SHA>-<geant4 tag> when a Geant4 version is requested,
       # so builds of the same commit with different Geant4 versions do not collide.
       - name: Push Container to GHCR
         id: push
         env:
           GEANT4_TAG: ${{ inputs.geant4_tag }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          image="oras://ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}${GEANT4_TAG:+-$GEANT4_TAG}"
+          image="oras://ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}${GEANT4_TAG:+-$GEANT4_TAG}-${ARCH}"
           echo "Pushing to: $image"
           apptainer push --authfile "$RUNNER_TEMP/apptainer-auth.json" simulation.sif "$image"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
 
       - name: Remove registry credentials
         if: always()
         run: rm -f "$RUNNER_TEMP/apptainer-auth.json"
+
+  # The multi-arch tag is the completion marker checked by downstream jobs: it is
+  # only published once both architectures above have built, tested and pushed.
+  index:
+    name: Publish multi-arch index
+    needs: build-test-container
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    outputs:
+      image: ${{ steps.index.outputs.image }}
+    steps:
+      - uses: oras-project/setup-oras@v1
+
+      - name: Publish the multi-arch index
+        id: index
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEANT4_TAG: ${{ inputs.geant4_tag }}
+        run: |
+          tag="${GITHUB_SHA}${GEANT4_TAG:+-$GEANT4_TAG}"
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          printf '%s' "$GITHUB_TOKEN" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+          oras manifest index create "$repo:$tag" "$repo:$tag-amd64" "$repo:$tag-arm64"
+          echo "image=oras://$repo:$tag" >> "$GITHUB_OUTPUT"
