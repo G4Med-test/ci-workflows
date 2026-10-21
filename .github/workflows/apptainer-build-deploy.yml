@@ -14,7 +14,7 @@ on:
         type: string
     outputs:
       image:
-        description: "oras:// reference of the pushed multi-arch SIF, used by the test jobs"
+        description: "oras:// reference of the pushed multi-arch SIF, used by the test jobs; empty on pull requests"
         value: ${{ jobs.index.outputs.image }}
 
 jobs:
@@ -75,10 +75,23 @@ jobs:
           built="$(sudo apptainer exec --unsquash simulation.sif uname -m)"
           test "$built" = "${{ matrix.host_arch }}"
 
+      # Pull requests (also from forks, whose token cannot write packages) never push:
+      # only reviewed code reaches GHCR. The amd64 image goes to the GitHub unit test
+      # as an artifact of this run.
+      - name: Upload image for the pull request unit test
+        if: github.event_name == 'pull_request' && matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulation-sif-amd64
+          path: simulation.sif
+          retention-days: 1
+          if-no-files-found: error
+
       # <commit SHA>, or <commit SHA>-<geant4 tag> when a Geant4 version is requested,
       # so builds of the same commit with different Geant4 versions do not collide.
       - name: Push Container to GHCR
         id: push
+        if: github.event_name != 'pull_request'
         env:
           GEANT4_TAG: ${{ inputs.geant4_tag }}
           ARCH: ${{ matrix.arch }}
@@ -96,6 +109,7 @@ jobs:
   index:
     name: Publish multi-arch index
     needs: build-test-container
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
       packages: write

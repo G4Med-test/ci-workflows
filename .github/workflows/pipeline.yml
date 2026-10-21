@@ -27,7 +27,8 @@ on:
     secrets:
       VALIDATION_RESULTS_TOKEN:
         description: PAT with contents/pull-requests write on G4Med-test/validation-results
-        required: true
+        # Not available to pull requests from forks, which never reach the validation.
+        required: false
 
 jobs:
   build:

@@ -4,8 +4,9 @@ on:
   workflow_call:
     inputs:
       image:
-        description: "oras:// reference of the SIF pushed by the build"
-        required: true
+        description: "oras:// reference of the SIF pushed by the build; empty uses the simulation-sif-amd64 artifact of this run (pull requests)"
+        required: false
+        default: ""
         type: string
       macro_file:
         description: "Path to macro file inside the repo"
@@ -27,7 +28,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y apptainer
 
+      - name: Download image built for the pull request
+        if: inputs.image == ''
+        uses: actions/download-artifact@v4
+        with:
+          name: simulation-sif-amd64
+
       - name: Login to GHCR
+        if: inputs.image != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -38,8 +46,10 @@ jobs:
         env:
           IMAGE: ${{ inputs.image }}
         run: |
-          echo "Pulling from: $IMAGE"
-          apptainer pull simulation.sif "$IMAGE"
+          if [[ -n "$IMAGE" ]]; then
+            echo "Pulling from: $IMAGE"
+            apptainer pull simulation.sif "$IMAGE"
+          fi
           echo "geant4_version=$(sudo apptainer exec --unsquash simulation.sif geant4-config --version)" >> "$GITHUB_OUTPUT"
 
       # Datasets depend on the Geant4 version of the image.
