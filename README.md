@@ -63,6 +63,25 @@ build ──┬── unit-test         (GitHub, ubuntu-24.04) ──┬── v
 Padova jobs use their own temporary directories, so concurrent jobs on the shared
 runner do not interfere, and need only Apptainer and CVMFS on the runner.
 
+### Only reviewed code runs on Padova
+
+| Event | build | unit-test (GitHub) | unit-test-padova, validation |
+| --- | --- | --- | --- |
+| pull request (branch or fork) | yes, nothing pushed: the amd64 SIF is an artifact of the run | yes | skipped |
+| push / `workflow_dispatch` on the default branch | yes, pushed to GHCR | yes | yes |
+| push / `workflow_dispatch` on another branch | yes, pushed to GHCR | yes | skipped |
+
+A developer opens a pull request; GitHub builds the image and runs the unit macro.
+Once someone with write access approves and merges it, the push on the default
+branch runs the whole pipeline, Padova included. The check is in
+`run-unit-padova.yml` and `run-validation-padova.yml` themselves, so a test's
+`ci.yml` cannot skip it by calling them directly.
+
+This relies on the default branch accepting only approved pull requests:
+`scripts/protect-repos.sh` sets that ruleset on ci-workflows and on every test in
+`tests.json` (or on the repositories given as arguments). Run it again after adding
+a test.
+
 ## Validation and portal JSON
 
 The test repository provides two files (see the template for a documented example):
