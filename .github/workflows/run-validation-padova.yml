@@ -78,9 +78,11 @@ jobs:
           work=$(mktemp -d "$RUNNER_TEMP/geant-validation.XXXXXXXX")
           mkdir -p "$work/cache" "$work/tmp" "$work/outputs" "$work/macros"
           cp "macro/$MACRO" "$work/macros/"
-          echo "VALIDATION_WORK=$work" >> "$GITHUB_ENV"
-          echo "APPTAINER_CACHEDIR=$work/cache" >> "$GITHUB_ENV"
-          echo "APPTAINER_TMPDIR=$work/tmp" >> "$GITHUB_ENV"
+          {
+            echo "VALIDATION_WORK=$work"
+            echo "APPTAINER_CACHEDIR=$work/cache"
+            echo "APPTAINER_TMPDIR=$work/tmp"
+          } >> "$GITHUB_ENV"
       - name: Pull simulation container
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -190,12 +192,26 @@ jobs:
           repository: G4Med-test/validation-results
           token: ${{ secrets.VALIDATION_RESULTS_TOKEN }}
           path: validation-results
+      # <test>/ holds the latest results, whatever their Geant4 version, and
+      # <test>/versions/<version>/ the latest of each version: comparisons between
+      # versions (validation/compare.py, dashboard, release report) read those.
       - name: Replace this test's results
+        id: version
+        env:
+          TEST_NAME: ${{ steps.test.outputs.name }}
         run: |
           set -euo pipefail
-          rm -rf "validation-results/${{ steps.test.outputs.name }}"
-          mkdir -p "validation-results/${{ steps.test.outputs.name }}"
-          cp -r validation-output/. "validation-results/${{ steps.test.outputs.name }}/"
+          version=$(python3 -c 'import json; print(json.load(open("validation-output/provenance.json"))["geant4_version"])')
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9._-]*$ ]] \
+            || { echo "::error::Unexpected Geant4 version: $version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          dir="validation-results/$TEST_NAME"
+          mkdir -p "$dir"
+          find "$dir" -mindepth 1 -maxdepth 1 ! -name versions -exec rm -rf {} +
+          cp -r validation-output/. "$dir/"
+          rm -rf "$dir/versions/$version"
+          mkdir -p "$dir/versions/$version"
+          cp -r validation-output/. "$dir/versions/$version/"
       - name: Open pull request
         id: pr
         uses: peter-evans/create-pull-request@v7
@@ -203,8 +219,8 @@ jobs:
           token: ${{ secrets.VALIDATION_RESULTS_TOKEN }}
           path: validation-results
           add-paths: ${{ steps.test.outputs.name }}
-          commit-message: "${{ steps.test.outputs.name }}: update results"
-          title: "${{ steps.test.outputs.name }}: update results"
+          commit-message: "${{ steps.test.outputs.name }}: update results (Geant4 ${{ steps.version.outputs.version }})"
+          title: "${{ steps.test.outputs.name }}: update results (Geant4 ${{ steps.version.outputs.version }})"
           body: "Source: ${{ github.repository }}@${{ github.sha }}"
           branch: results/${{ steps.test.outputs.name }}
           delete-branch: true

@@ -29,6 +29,9 @@ on:
         description: PAT with contents/pull-requests write on G4Med-test/validation-results
         # Not available to pull requests from forks, which never reach the validation.
         required: false
+      G4MED_DISPATCH_TOKEN:
+        description: Token with Actions write on dashboard and ci-workflows (see the notify job)
+        required: false
 
 jobs:
   build:
@@ -39,6 +42,7 @@ jobs:
     with:
       apptainer_def: ${{ inputs.apptainer_def }}
       geant4_tag: ${{ inputs.geant4_tag }}
+      tools_ref: ${{ inputs.validation_tools_ref }}
 
   unit-test:
     needs: build
@@ -73,3 +77,56 @@ jobs:
       image: ${{ needs.build.outputs.image }}
       validation_config: ${{ inputs.validation_config }}
       validation_tools_ref: ${{ inputs.validation_tools_ref }}
+
+  # Keeps the 10 newest images of this test (and those of the published results, and
+  # any younger than 14 days) in GHCR. Deletes only when the organization variable
+  # G4MED_PRUNE_IMAGES is "true"; otherwise it only lists what it would delete.
+  prune-images:
+    needs: build
+    if: ${{ always() && !startsWith(github.event_name, 'pull_request') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/ci-workflows
+          ref: ${{ inputs.validation_tools_ref }}
+          path: ci-tools
+      - uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/validation-results
+          path: validation-results
+      - name: Prune old images
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RESULTS_DIR: validation-results
+          PRUNE: ${{ vars.G4MED_PRUNE_IMAGES }}
+        run: |
+          args=()
+          if [[ "$PRUNE" == true ]]; then args+=(--delete); fi
+          python3 ci-tools/scripts/prune_images.py "${args[@]}"
+
+  # Last job: the dashboard refreshes now instead of at its next scheduled update and,
+  # for runs started by a Geant4 validation, release-queue.yml starts the next test
+  # (scripts/release.py counts a run whose only job left is this one as finished).
+  notify:
+    needs: [build, unit-test, unit-test-padova, validation]
+    if: ${{ always() && !startsWith(github.event_name, 'pull_request') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Update the dashboard and the release queue
+        env:
+          GH_TOKEN: ${{ secrets.G4MED_DISPATCH_TOKEN }}
+          GEANT4_TAG: ${{ inputs.geant4_tag }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::notice::G4MED_DISPATCH_TOKEN not available: dashboard and release queue update on their schedule"
+            exit 0
+          fi
+          gh workflow run update.yml -R G4Med-test/dashboard || echo "::warning::Could not start the dashboard update"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -n "$GEANT4_TAG" ]]; then
+            gh workflow run release-queue.yml -R G4Med-test/ci-workflows || echo "::warning::Could not start release-queue.yml"
+          fi

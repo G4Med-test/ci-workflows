@@ -1,0 +1,50 @@
+name: Geant4 release queue
+
+# Follows every open Geant4 validation (issues labelled geant4-release, see
+# geant4-release.yml and scripts/release.py): starts the next tests when one finishes,
+# asks again for a base image whose build disappeared, and when all tests have
+# finished posts the report and closes the issue. Started by geant4-release.yml, by the
+# last job of every test pipeline started for a release, and every 15 minutes in case
+# one of those starts is lost. Runs one at a time: a newer start replaces a pending one.
+on:
+  schedule:
+    - cron: "7-59/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: geant4-release-queue
+  cancel-in-progress: false
+
+jobs:
+  advance:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Any open validation?
+        id: open
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=geant4-release&state=open&per_page=1" --jq length)
+          echo "count=$n" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.open.outputs.count != '0'
+      # The report compares each test with its previous Geant4 version.
+      - uses: actions/checkout@v4
+        if: steps.open.outputs.count != '0'
+        with:
+          repository: G4Med-test/validation-results
+          path: validation-results
+          token: ${{ secrets.VALIDATION_RESULTS_TOKEN || github.token }}
+      - name: Advance the validations
+        if: steps.open.outputs.count != '0'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DISPATCH_TOKEN: ${{ secrets.G4MED_DISPATCH_TOKEN }}
+          RESULTS_DIR: validation-results
+        run: python3 scripts/release.py advance

@@ -1,0 +1,3 @@
+self-hosted-runner:
+  labels:
+    - geant-gha-runner-on-padova

@@ -1,0 +1,105 @@
+name: Self-test
+
+# Checks this repository on every change: workflow syntax, the exporter's own
+# regression suite, and every test repository listed in tests.json against the
+# exporter of this commit (configuration, macros and the repository's own tests).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint workflows
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+
+  scripts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests -v
+
+  list-tests:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read tests.json
+        id: list
+        run: echo "matrix=$(python3 validation/tests_list.py matrix)" >> "$GITHUB_OUTPUT"
+
+  test-repository:
+    name: ${{ matrix.repo }}
+    needs: list-tests
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.list-tests.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ci-workflows
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.ref }}
+          path: test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the Python packages of the base image
+        run: python -m pip install -r ci-workflows/validation/requirements.txt
+      - name: Check validation config, macros and metadata()
+        run: |
+          if [[ ! -f test/validation/config.json ]]; then
+            echo "::notice::No validation/config.json: validation is not enabled"
+            exit 0
+          fi
+          python ci-workflows/validation/export.py matrix --repo test
+      - name: Run the repository's own validation tests
+        env:
+          G4MED_TOOLS: ${{ github.workspace }}/ci-workflows/validation
+          PYTHONPATH: ${{ github.workspace }}/ci-workflows/validation
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          if [[ ! -d test/validation/tests ]]; then
+            echo "::notice::No validation/tests directory"
+            exit 0
+          fi
+          python -m unittest discover -s test/validation/tests -v
+
+  regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ci-workflows
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the Python packages of the base image
+        run: python -m pip install -r ci-workflows/validation/requirements.txt
+      # The suite expects the test repositories next to ci-workflows.
+      - name: Check out the listed tests and the template
+        run: |
+          python ci-workflows/validation/tests_list.py lines | while read -r repo ref; do
+            git clone --quiet "https://github.com/$repo.git" "${repo#*/}"
+            git -C "${repo#*/}" checkout --quiet "$ref"
+          done
+          git clone --quiet https://github.com/G4Med-test/template.git
+      - name: Exporter regression suite
+        env:
+          G4MED_WORKSPACE: ${{ github.workspace }}
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s ci-workflows/validation/tests -v
+      - name: Template configuration and macros
+        run: python ci-workflows/validation/export.py matrix --repo template

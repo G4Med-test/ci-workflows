@@ -1,0 +1,24 @@
+{
+  "tests": [
+    {"repo": "G4Med-test/LowEFrag", "ref": "master"},
+    {"repo": "G4Med-test/CCCStest", "ref": "main"},
+    {"repo": "G4Med-test/Attenuation-ilantest", "ref": "main"},
+    {"repo": "G4Med-test/brachy-ir", "ref": "main"},
+    {"repo": "G4Med-test/BraggPeakGSI_MT", "ref": "main"},
+    {"repo": "G4Med-test/Bremsstrahlung", "ref": "main"},
+    {"repo": "G4Med-test/ElecBackScat", "ref": "main"},
+    {"repo": "G4Med-test/ElectronScattering", "ref": "main"},
+    {"repo": "G4Med-test/fanoCavity", "ref": "main"},
+    {"repo": "G4Med-test/FragTest", "ref": "main"},
+    {"repo": "G4Med-test/hadrontherapy", "ref": "main"},
+    {"repo": "G4Med-test/mammo_G4MSBG", "ref": "main"},
+    {"repo": "G4Med-test/medical_linac", "ref": "main"},
+    {"repo": "G4Med-test/microyz", "ref": "main"},
+    {"repo": "G4Med-test/NeutronYield", "ref": "main"},
+    {"repo": "G4Med-test/pet_imaging", "ref": "main"},
+    {"repo": "G4Med-test/TestDEDX2", "ref": "main"},
+    {"repo": "G4Med-test/TestEm12-DPK", "ref": "main"},
+    {"repo": "G4Med-test/TestEm3DEDX", "ref": "main"},
+    {"repo": "G4Med-test/UCSFRawBeamLine", "ref": "main"}
+  ]
+}
