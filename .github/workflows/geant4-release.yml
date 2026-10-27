@@ -1,0 +1,103 @@
+name: Validate a Geant4 release
+run-name: Validate Geant4 ${{ inputs.geant4_tag }}
+
+# Validates one Geant4 version with every test in tests.json (or the given ones, e.g.
+# to rerun the failed ones). Started by geant4-alma9 after it publishes a new version,
+# from the dashboard's Geant4 page, or by hand. Needs write access to this repository.
+#
+# The validation is an issue "Geant4 <tag> validation" (label geant4-release), whose
+# state scripts/release.py keeps up to date. If ghcr.io/g4med-test/geant4-alma9:<tag> is
+# missing, this workflow starts its build; geant4-alma9 starts this workflow again once
+# it is published. release-queue.yml then starts the tests, fastest first and at most
+# max_parallel at a time, and reports when all have finished.
+on:
+  workflow_dispatch:
+    inputs:
+      geant4_tag:
+        description: Geant4 tag (github.com/Geant4/geant4), e.g. v11.4.3
+        required: true
+        type: string
+      tests:
+        description: Tests to (re)run, comma separated names (empty = all of tests.json)
+        default: ""
+        type: string
+      max_parallel:
+        description: Test pipelines running at the same time
+        default: "3"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: geant4-release-${{ inputs.geant4_tag }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+      actions: write   # to start release-queue.yml
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the Geant4 tag and its base image
+        id: image
+        env:
+          GEANT4_TAG: ${{ inputs.geant4_tag }}
+          MAX_PARALLEL: ${{ inputs.max_parallel }}
+        run: |
+          [[ "$GEANT4_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9][A-Za-z0-9.-]*)?$ ]] \
+            || { echo "::error::Invalid geant4_tag: $GEANT4_TAG"; exit 1; }
+          [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]?$ ]] || { echo "::error::Invalid max_parallel: $MAX_PARALLEL"; exit 1; }
+          git ls-remote --exit-code --tags https://github.com/Geant4/geant4.git "refs/tags/$GEANT4_TAG" > /dev/null \
+            || { echo "::error::$GEANT4_TAG is not a tag of github.com/Geant4/geant4"; exit 1; }
+          token=$(curl -fsSL "https://ghcr.io/token?scope=repository:g4med-test/geant4-alma9:pull" \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')
+          # Only "not found" means the image must be built; any other error stops here.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" \
+            -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json" \
+            "https://ghcr.io/v2/g4med-test/geant4-alma9/manifests/$GEANT4_TAG")
+          case "$code" in
+            200) echo "image=published" >> "$GITHUB_OUTPUT" ;;
+            404) echo "image=missing" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::Cannot check ghcr.io/g4med-test/geant4-alma9:$GEANT4_TAG (HTTP $code)"; exit 1 ;;
+          esac
+      - name: Check the dispatch token
+        env:
+          GH_TOKEN: ${{ secrets.G4MED_DISPATCH_TOKEN }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Missing secret G4MED_DISPATCH_TOKEN (Actions: read and write on geant4-alma9 and the tests)"
+            exit 1
+          fi
+      # The base image is missing: build it. geant4-alma9 publishes it and then starts
+      # this workflow again with the same tag; release-queue.yml asks again if the build
+      # disappears (e.g. cancelled by the hourly run of geant4-alma9).
+      - name: Start the build of the base image
+        if: steps.image.outputs.image == 'missing'
+        env:
+          GH_TOKEN: ${{ secrets.G4MED_DISPATCH_TOKEN }}
+          GEANT4_TAG: ${{ inputs.geant4_tag }}
+        run: |
+          gh workflow run build.yml -R G4Med-test/geant4-alma9 -f geant4_tag="$GEANT4_TAG"
+          echo "Base image \`$GEANT4_TAG\` missing: [build](https://github.com/G4Med-test/geant4-alma9/actions/workflows/build.yml) started." \
+            >> "$GITHUB_STEP_SUMMARY"
+      - name: Record the request
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DISPATCH_TOKEN: ${{ secrets.G4MED_DISPATCH_TOKEN }}
+          GEANT4_TAG: ${{ inputs.geant4_tag }}
+          TESTS: ${{ inputs.tests }}
+          MAX_PARALLEL: ${{ inputs.max_parallel }}
+          IMAGE: ${{ steps.image.outputs.image }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          python3 scripts/release.py request --tag "$GEANT4_TAG" --image "$IMAGE" \
+            --tests "$TESTS" --max-parallel "$MAX_PARALLEL" --actor "$ACTOR"
+      - name: Start the queue
+        if: steps.image.outputs.image == 'published'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release-queue.yml -R "$GITHUB_REPOSITORY"
