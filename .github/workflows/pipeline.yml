@@ -103,8 +103,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RESULTS_DIR: validation-results
-          DELETE: ${{ vars.G4MED_PRUNE_IMAGES == 'true' && '--delete' || '' }}
-        run: python3 ci-tools/scripts/prune_images.py $DELETE
+          PRUNE: ${{ vars.G4MED_PRUNE_IMAGES }}
+        run: |
+          args=()
+          if [[ "$PRUNE" == true ]]; then args+=(--delete); fi
+          python3 ci-tools/scripts/prune_images.py "${args[@]}"
 
   # Last job: the dashboard refreshes now instead of at its next scheduled update and,
   # for runs started by a Geant4 validation, release-queue.yml starts the next test

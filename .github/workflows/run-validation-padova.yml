@@ -78,9 +78,11 @@ jobs:
           work=$(mktemp -d "$RUNNER_TEMP/geant-validation.XXXXXXXX")
           mkdir -p "$work/cache" "$work/tmp" "$work/outputs" "$work/macros"
           cp "macro/$MACRO" "$work/macros/"
-          echo "VALIDATION_WORK=$work" >> "$GITHUB_ENV"
-          echo "APPTAINER_CACHEDIR=$work/cache" >> "$GITHUB_ENV"
-          echo "APPTAINER_TMPDIR=$work/tmp" >> "$GITHUB_ENV"
+          {
+            echo "VALIDATION_WORK=$work"
+            echo "APPTAINER_CACHEDIR=$work/cache"
+            echo "APPTAINER_TMPDIR=$work/tmp"
+          } >> "$GITHUB_ENV"
       - name: Pull simulation container
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
