@@ -19,6 +19,10 @@
     {"repo": "G4Med-test/TestDEDX2", "ref": "main"},
     {"repo": "G4Med-test/TestEm12-DPK", "ref": "main"},
     {"repo": "G4Med-test/TestEm3DEDX", "ref": "main"},
-    {"repo": "G4Med-test/UCSFRawBeamLine", "ref": "main"}
+    {"repo": "G4Med-test/UCSFRawBeamLine", "ref": "main"},
+    {"repo": "G4Med-test/dna-range", "ref": "main"},
+    {"repo": "G4Med-test/dna-spower", "ref": "main"},
+    {"repo": "G4Med-test/dna-wvalue", "ref": "main"},
+    {"repo": "G4Med-test/raddecay", "ref": "main"}
   ]
 }
