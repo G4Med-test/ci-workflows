@@ -147,6 +147,14 @@ class ExportTests(unittest.TestCase):
                                      str(WORKSPACE / "CCCStest"), "--config", str(path)], capture_output=True)
             self.assertNotEqual(result.returncode, 0)
 
+    def test_matrix_lines_match_the_json_matrix(self):
+        def matrix(*extra):
+            return subprocess.run([sys.executable, str(TOOLS / "export.py"), "matrix", "--repo",
+                                   str(WORKSPACE / "CCCStest"), *extra], capture_output=True, text=True,
+                                  check=True).stdout
+        include = json.loads(matrix())["include"]
+        self.assertEqual(matrix("--lines").splitlines(), ["%s\t%s" % (j["id"], j["macro"]) for j in include])
+
     def test_lowefrag_normalization_weighted_errors_and_flow(self):
         job, records, _ = self.lowefrag()
         self.assertEqual(len(records), 54)

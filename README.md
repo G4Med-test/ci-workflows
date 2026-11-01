@@ -159,8 +159,44 @@ python3 ci-workflows/validation/compare.py validation-results/LowEFrag/versions/
 The release report and the dashboard use it with the previous version that has
 results.
 
-To run all of this locally (build or download the image, datasets, simulation,
-`matrix` and `export`), see the template's README.
+To run all of this locally step by step (build or download the image, datasets,
+simulation, `matrix` and `export`), see the template's README; to run whole tests
+locally or on a farm, see [below](#running-the-pipeline-outside-github-actions).
+
+## Running the pipeline outside GitHub Actions
+
+`scripts/local-pipeline.sh` runs the validation of one, several or all tests on a
+workstation or a batch farm with the steps of the CI: by default the image the CI
+built for the commit, every macro run by `run-macro.sh` and exported by
+`export-macro.sh`, the results merged as `collect-json` does, so
+`<dir>/<test>/validation-json` is what the CI artifact `validation-json` would be. It
+needs bash (3.2 or later), git and Apptainer; Python runs inside the test images.
+
+```bash
+git clone https://github.com/G4Med-test/ci-workflows.git
+P=ci-workflows/scripts/local-pipeline.sh
+$P prepare --dir /shared/run LowEFrag CCCStest   # or: all; --geant4 v11.4.3; --build
+$P unit --dir /shared/run LowEFrag               # optional, as the Padova unit test
+$P submit --dir /shared/run local -j 4           # runs every macro, then collects
+$P submit --dir /shared/run slurm -- --partition=long --time=12:00:00
+$P submit --dir /shared/run condor -- -a 'request_memory = 4 GB'
+$P status --dir /shared/run
+$P collect --dir /shared/run                     # after condor (Slurm runs it itself)
+```
+
+- `prepare` checks out the default branch of each test (or `--ref`), pulls
+  `oras://ghcr.io/g4med-test/<test>:<commit>[-<tag>]` (or builds it with `--build`,
+  passing `APPTAINER_BUILD_FLAGS`, e.g. `--fakeroot`), takes the datasets from
+  `--g4data`, `$G4DATA` or CVMFS, else downloads them once per Geant4 version, and
+  writes one line per macro in `<dir>/jobs.txt`.
+- One batch job runs one macro: `local-pipeline.sh run --dir <dir> <line>`. Macros
+  already done are skipped, so submitting again runs only the failed ones. On a farm
+  the run directory must be on a filesystem shared with the nodes; images are
+  unpacked in `$TMPDIR` of the node unless `APPTAINER_TMPDIR` is set.
+- `provenance.json` names the test commit and the image as in the CI. It names no
+  commit if the checkout has local changes, and no image if it was built locally.
+
+`local-pipeline.sh --help` describes every command and the run directory.
 
 ## Test repositories: `tests.json`
 
@@ -255,6 +291,7 @@ repository that first pushed it normally has; otherwise the job only warns.
 | `scripts/sync-ci-paths-ignore.py` | One-off: pull requests adding the template's `paths-ignore` to every test's `ci.yml` |
 | `scripts/protect-repos.sh` | Ruleset of the default branches (see above) |
 | `scripts/run-macro.sh`, `export-macro.sh`, `run-unit.sh`, `publish-results.sh` | The steps of the pipeline, shared with runs outside GitHub Actions (see [Validation and portal JSON](#validation-and-portal-json)) |
+| `scripts/local-pipeline.sh` | The pipeline outside GitHub Actions, locally or on Slurm/HTCondor (see [above](#running-the-pipeline-outside-github-actions)) |
 | `tests/` | Tests of `scripts/` (the bash scripts with a stub of Apptainer), run by `self-test.yml`, which also runs shellcheck on them |
 | `validation/geantval.py` | Portal format (`getJSON`) and macro helpers |
 | `validation/tests_list.py` | Reads and checks `tests.json` |
