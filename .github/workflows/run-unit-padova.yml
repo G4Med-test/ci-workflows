@@ -12,6 +12,11 @@ on:
         required: false
         default: "macro/unit.mac"
         type: string
+      tools_ref:
+        description: "ci-workflows ref providing scripts/run-unit.sh: keep it equal to the `uses:` ref"
+        required: false
+        default: main
+        type: string
 
 jobs:
   test-container-padova:
@@ -28,11 +33,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/ci-workflows
+          ref: ${{ inputs.tools_ref }}
+          path: ci-tools
+
       # The runner is shared: every job gets its own image, cache and output directory.
       - name: Create isolated working directories
         run: |
           work=$(mktemp -d "$RUNNER_TEMP/geant-unit.XXXXXXXX")
-          mkdir -p "$work/cache" "$work/tmp" "$work/outputs"
+          mkdir -p "$work/cache" "$work/tmp"
           {
             echo "UNIT_WORK=$work"
             echo "APPTAINER_CACHEDIR=$work/cache"
@@ -48,15 +59,14 @@ jobs:
           echo "Pulling from: $IMAGE"
           apptainer pull "$UNIT_WORK/simulation.sif" "$IMAGE"
 
+      # The same script runs the unit macro outside GitHub Actions.
       - name: Run container with macro
+        env:
+          MACRO_FILE: ${{ inputs.macro_file }}
         run: |
-          echo "Running macro: ${{ inputs.macro_file }}"
-          cd "$UNIT_WORK/outputs"
-          apptainer run --unsquash \
-            -B /cvmfs/geant4.cern.ch/share/data:/g4data:ro \
-            -B "$UNIT_WORK/outputs:/outputs" \
-            "$UNIT_WORK/simulation.sif" \
-            "${GITHUB_WORKSPACE}/${{ inputs.macro_file }}"
+          ci-tools/scripts/run-unit.sh --sif "$UNIT_WORK/simulation.sif" \
+            --macro "$GITHUB_WORKSPACE/$MACRO_FILE" --work "$UNIT_WORK" \
+            --g4data /cvmfs/geant4.cern.ch/share/data
 
       - name: Clean this job's temporary files
         if: ${{ always() && env.UNIT_WORK != '' }}

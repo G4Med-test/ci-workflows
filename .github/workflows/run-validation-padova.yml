@@ -76,8 +76,7 @@ jobs:
       - name: Create isolated working directories
         run: |
           work=$(mktemp -d "$RUNNER_TEMP/geant-validation.XXXXXXXX")
-          mkdir -p "$work/cache" "$work/tmp" "$work/outputs" "$work/macros"
-          cp "macro/$MACRO" "$work/macros/"
+          mkdir -p "$work/cache" "$work/tmp"
           {
             echo "VALIDATION_WORK=$work"
             echo "APPTAINER_CACHEDIR=$work/cache"
@@ -90,33 +89,20 @@ jobs:
         run: |
           echo "$GITHUB_TOKEN" | apptainer registry login -u "$GITHUB_ACTOR" --password-stdin oras://ghcr.io
           apptainer pull "$VALIDATION_WORK/simulation.sif" "$IMAGE"
+      # The same scripts run the macro and export its JSON outside GitHub Actions.
       - name: Run simulation and capture stdout
         run: |
-          set -euo pipefail
-          apptainer run --unsquash \
-            -B /cvmfs/geant4.cern.ch/share/data:/g4data:ro \
-            -B "$VALIDATION_WORK/macros:/macro:ro" \
-            -B "$VALIDATION_WORK/outputs:/outputs" \
-            --pwd /outputs "$VALIDATION_WORK/simulation.sif" "/macro/$(basename "$MACRO")" \
-            > "$VALIDATION_WORK/outputs/test_stdout.txt" \
-            2> "$VALIDATION_WORK/outputs/test_stderr.txt"
-          if grep -E 'COMMAND NOT FOUND|Batch is interrupted|Fatal Exception|Fatal Error In Argument' \
-              "$VALIDATION_WORK/outputs/test_stdout.txt" "$VALIDATION_WORK/outputs/test_stderr.txt"; then
-            echo 'Geant4 reported an error; refusing to export results.' >&2
-            exit 1
-          fi
+          ci-tools/scripts/run-macro.sh --sif "$VALIDATION_WORK/simulation.sif" \
+            --macro "macro/$MACRO" --work "$VALIDATION_WORK" \
+            --g4data /cvmfs/geant4.cern.ch/share/data
       - name: Export validation JSON inside the simulation container
         env:
           CONFIG: ${{ inputs.validation_config }}
           IMAGE: ${{ inputs.image }}
         run: |
-          apptainer exec --unsquash \
-            -B "$GITHUB_WORKSPACE:/validation:ro" \
-            -B "$VALIDATION_WORK:/work" \
-            --pwd /validation "$VALIDATION_WORK/simulation.sif" \
-            /opt/venv/bin/python3 /validation/ci-tools/validation/export.py export \
-            --repo /validation --config "$CONFIG" --macro "$MACRO" \
-            --input /work/outputs --output /work/json
+          ci-tools/scripts/export-macro.sh --sif "$VALIDATION_WORK/simulation.sif" \
+            --repo "$GITHUB_WORKSPACE" --config "$CONFIG" --macro "$MACRO" \
+            --work "$VALIDATION_WORK"
       - name: Upload JSON for this macro
         uses: actions/upload-artifact@v4
         with:
@@ -183,6 +169,11 @@ jobs:
       - name: Determine test name
         id: test
         run: echo "name=$(basename '${{ github.repository }}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/ci-workflows
+          ref: ${{ inputs.validation_tools_ref }}
+          path: ci-tools
       - uses: actions/download-artifact@v4
         with:
           name: validation-json
@@ -201,17 +192,9 @@ jobs:
           TEST_NAME: ${{ steps.test.outputs.name }}
         run: |
           set -euo pipefail
-          version=$(python3 -c 'import json; print(json.load(open("validation-output/provenance.json"))["geant4_version"])')
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9._-]*$ ]] \
-            || { echo "::error::Unexpected Geant4 version: $version"; exit 1; }
+          version=$(ci-tools/scripts/publish-results.sh --input validation-output \
+            --results validation-results --test "$TEST_NAME")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          dir="validation-results/$TEST_NAME"
-          mkdir -p "$dir"
-          find "$dir" -mindepth 1 -maxdepth 1 ! -name versions -exec rm -rf {} +
-          cp -r validation-output/. "$dir/"
-          rm -rf "$dir/versions/$version"
-          mkdir -p "$dir/versions/$version"
-          cp -r validation-output/. "$dir/versions/$version/"
       - name: Open pull request
         id: pr
         uses: peter-evans/create-pull-request@v7
