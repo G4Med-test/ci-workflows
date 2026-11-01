@@ -9,6 +9,7 @@ sbatch and condor_submit are stubs that record their arguments.
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -72,6 +73,12 @@ for arg in "$@"; do echo "$arg"; done >> "$FAKE_LOG.$(basename "$0")"
 echo 1234
 '''
 
+# gh: no pull request exists yet for any branch.
+GH = '''#!/bin/sh
+if [ "$1 $2" = "pr view" ]; then exit 1; fi
+for arg in "$@"; do echo "$arg"; done >> "$FAKE_LOG.gh"
+'''
+
 PARSER = '''from pathlib import Path
 from geantval import getJSON, one_command
 
@@ -92,7 +99,7 @@ class LocalPipelineTests(unittest.TestCase):
         self.tmp = Path(tmp.name).resolve()
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir()
-        for name, text in [("apptainer", APPTAINER), ("sbatch", RECORDER), ("condor_submit", RECORDER),
+        for name, text in [("apptainer", APPTAINER), ("sbatch", RECORDER), ("condor_submit", RECORDER), ("gh", GH),
                            ("geant4-config", '#!/bin/sh\necho "$FAKE_G4_VERSION"\n')]:
             (bin_dir / name).write_text(text)
             (bin_dir / name).chmod(0o755)
@@ -100,7 +107,9 @@ class LocalPipelineTests(unittest.TestCase):
         self.env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", FAKE_LOG=str(self.log),
                         FAKE_G4_VERSION="11.3.2", G4MED_GIT_URL=str(self.tmp / "G4Med-test"),
                         G4MED_CVMFS_DATA=str(self.tmp / "no-cvmfs"), TMPDIR=str(self.tmp),
-                        PYTHONDONTWRITEBYTECODE="1")
+                        PYTHONDONTWRITEBYTECODE="1", G4MED_USER="tester",
+                        GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                        GIT_COMMITTER_EMAIL="t@t")
         for name in ("G4DATA", "G4MED_RUN_DIR", "APPTAINER_TMPDIR", "APPTAINER_CACHEDIR", "GITHUB_ACTIONS",
                      "GITHUB_REPOSITORY", "GITHUB_SHA", "IMAGE"):
             self.env.pop(name, None)
@@ -156,6 +165,8 @@ class LocalPipelineTests(unittest.TestCase):
         self.assertEqual(sorted(r["chart"]["title"] for r in records), ["events 10", "events 20"])
         self.assertEqual(len(list((out / "plots").iterdir())), 2)
         provenance = json.loads((out / "provenance.json").read_text())
+        runner = provenance.pop("runner")
+        self.assertRegex(runner, r"^local-pipeline:tester@.")
         self.assertEqual(provenance, {"test_repo": {"url": "https://github.com/G4Med-test/Fake", "sha": self.sha},
                                       "container_repo": None, "image": image, "geant4_version": "11.3.2"})
         self.assertIn("Fake                           2     2       0", self.pipeline("status").stdout)
@@ -252,6 +263,91 @@ class LocalPipelineTests(unittest.TestCase):
         sub = (self.run_dir / "condor-run.sub").read_text()
         self.assertIn(f'arguments = "{PIPELINE} run --dir {self.run_dir} $(test) $(id)"', sub)
         self.assertIn(f"queue test,id,macro from {self.run_dir}/jobs.txt", sub)
+
+    def make_results_repo(self):
+        src = self.tmp / "src/validation-results"
+        (src / "Other").mkdir(parents=True)
+        (src / "Other/results.json").write_text("[]\n")
+        git = ["git", "-C", str(src)]
+        subprocess.run(["git", "init", "-q", "-b", "main", str(src)], check=True)
+        subprocess.run(git + ["add", "."], check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "init"], check=True, env=self.env)
+        bare = self.tmp / "G4Med-test/validation-results.git"
+        subprocess.run(["git", "clone", "-q", "--bare", str(src), str(bare)], check=True)
+        return bare
+
+    def git_show(self, repo, *args):
+        return subprocess.run(["git", "--git-dir", str(repo), *args], capture_output=True, text=True,
+                              check=True).stdout
+
+    def test_publish_proposes_the_results_on_a_branch_of_the_user(self):
+        bare = self.make_results_repo()
+        self.pipeline("prepare", "Fake")
+        self.pipeline("submit", "local")
+        self.pipeline("publish")
+        branch = "results/Fake-local-tester"
+        files = self.git_show(bare, "ls-tree", "-r", "--name-only", branch).split()
+        self.assertIn("Other/results.json", files)
+        self.assertIn("Fake/results.json", files)
+        self.assertIn("Fake/versions/11.3.2/provenance.json", files)
+        self.assertEqual(len([f for f in files if f.startswith("Fake/plots/")]), 2)
+        message = self.git_show(bare, "log", "-1", "--format=%B", branch)
+        self.assertIn("Fake: update results (Geant4 11.3.2, local run)", message)
+        self.assertIn(f"Source: G4Med-test/Fake@{self.sha}", message)
+        provenance = json.loads(self.git_show(bare, "show", f"{branch}:Fake/provenance.json"))
+        self.assertTrue(provenance["runner"].startswith("local-pipeline:tester@"))
+        # Nothing on main: a maintainer merges the pull request.
+        self.assertNotIn("Fake", self.git_show(bare, "ls-tree", "--name-only", "main"))
+        gh = (self.tmp / "apptainer.log.gh").read_text().splitlines()
+        self.assertEqual(gh[:7], ["pr", "create", "-R", "G4Med-test/validation-results", "--head", branch,
+                                  "--title"])
+        self.assertIn("not of the CI pipeline", gh[9])
+
+        # Publishing the same results again proposes nothing new.
+        self.assertIn("already proposed", self.pipeline("publish", "Fake").stderr)
+        self.assertEqual(len((self.tmp / "apptainer.log.gh").read_text().splitlines()), len(gh))
+
+        # The CI publishes the test meanwhile: publishing again rebuilds the branch on it.
+        src = self.tmp / "src/validation-results"
+        (src / "Fake").mkdir()
+        (src / "Fake/results.json").write_text("[]\n")
+        subprocess.run(["git", "-C", str(src), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(src), "commit", "-q", "-m", "Fake: update results (CI)"], check=True,
+                       env=self.env)
+        subprocess.run(["git", "-C", str(src), "push", "-q", str(bare), "main"], check=True)
+        self.assertNotIn("already proposed", self.pipeline("publish", "Fake").stderr)
+        self.assertEqual(self.git_show(bare, "rev-parse", "main"), self.git_show(bare, "rev-parse", f"{branch}~1"))
+
+    def test_publish_refuses_results_the_ci_would_not_have(self):
+        self.make_results_repo()
+        cases = {
+            "local builds": dict(prepare=["--build"]),
+            "not on the default branch": dict(prepare=["--ref", "feature"]),
+            "only results of a commit": dict(edit=True),
+        }
+        src = self.tmp / "src/Fake"
+        git = ["git", "-C", str(src)]
+        subprocess.run(git + ["switch", "-q", "-c", "feature"], check=True)
+        (src / "macro/a.mac").write_text("/run/beamOn 30\n")
+        subprocess.run(git + ["commit", "-q", "-am", "unreviewed"], check=True, env=self.env)
+        subprocess.run(git + ["push", "-q", str(self.tmp / "G4Med-test/Fake.git"), "feature"], check=True)
+        for expected, case in cases.items():
+            with self.subTest(expected):
+                shutil.rmtree(self.run_dir, ignore_errors=True)
+                self.pipeline("prepare", *case.get("prepare", []), "Fake")
+                self.pipeline("submit", "local")
+                if case.get("edit"):
+                    (self.run_dir / "Fake/repo/README.md").write_text("changed\n")
+                result = self.pipeline("publish", check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+        self.assertFalse((self.tmp / "apptainer.log.gh").exists())
+
+    def test_publish_needs_collected_results(self):
+        self.make_results_repo()
+        self.pipeline("prepare", "Fake")
+        self.assertIn("no collected results", self.pipeline("publish", check=False).stderr)
+        self.assertIn("run collect first", self.pipeline("publish", "Fake", check=False).stderr)
 
     def test_all_reads_tests_json(self):
         result = self.pipeline("prepare", "all", check=False)

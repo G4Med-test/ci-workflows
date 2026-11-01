@@ -14,7 +14,8 @@ SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 TOOLS=$(cd "$(dirname "$0")/.." && pwd)
 SCRIPTS="$TOOLS/scripts"
 GIT_URL="${G4MED_GIT_URL:-https://github.com/G4Med-test}"
-REGISTRY="${G4MED_REGISTRY:-oras://ghcr.io/g4med-test}"
+CI_REGISTRY=oras://ghcr.io/g4med-test
+REGISTRY="${G4MED_REGISTRY:-$CI_REGISTRY}"
 CVMFS_DATA="${G4MED_CVMFS_DATA:-/cvmfs/geant4.cern.ch/share/data}"
 DIR="${G4MED_RUN_DIR:-$PWD/g4med-run}"
 TAB=$(printf '\t')
@@ -54,6 +55,14 @@ Commands:
       DIR/<test>/validation-json, as the collect-json job does.
   status
       Macros done, failed, started and pending of each prepared test.
+  publish [--results DIR] [--no-push] [TEST...]
+      Propose the collected results of each test (default: all collected) to
+      validation-results, with the layout of the CI: a commit on the branch
+      results/<test>-local-<user>, pushed, and a pull request (opened with gh if
+      available, otherwise its link is printed) for a maintainer to review and merge.
+      Only results equivalent to the CI's are published: image pulled from the CI,
+      checkout unchanged, commit on the default branch. --results uses an existing
+      clean checkout of validation-results (default: DIR/validation-results).
 
 Run directory:
   DIR/jobs.txt                 one "<test> TAB <id> TAB <macro>" line per macro
@@ -64,9 +73,12 @@ Run directory:
   DIR/<test>/pipeline.env      commit, image and datasets used by the other commands
   DIR/<test>/runs/<id>/        outputs/, macros/, json/ and status of one macro
   DIR/<test>/validation-json/  results of the test
+  DIR/validation-results/      checkout used by publish
 
-Environment: G4MED_GIT_URL (default https://github.com/G4Med-test), G4MED_REGISTRY
-(default oras://ghcr.io/g4med-test), G4DATA, APPTAINER_BUILD_FLAGS, APPTAINER_TMPDIR
+Environment: G4MED_GIT_URL (default https://github.com/G4Med-test; to push with SSH:
+git@github.com:G4Med-test), G4MED_REGISTRY (default oras://ghcr.io/g4med-test),
+G4MED_USER (default: the login name, in provenance.json and branch names), G4DATA,
+APPTAINER_BUILD_FLAGS, APPTAINER_TMPDIR
 (default: a new directory in $TMPDIR, removed at the end; images are unpacked there).
 If the images are private, run `apptainer registry login oras://ghcr.io` once.
 EOF
@@ -75,6 +87,7 @@ EOF
 die() { echo "local-pipeline.sh: $*" >&2; exit 1; }
 log() { echo "==> $*" >&2; }
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+user_name() { printf '%s' "${G4MED_USER:-$(id -un)}" | tr -c 'A-Za-z0-9._-' '-'; }
 
 check_test_name() {
   [[ "$1" =~ ^[A-Za-z0-9._-]+$ && "$1" != . && "$1" != .. ]] || die "invalid test name: $1"
@@ -178,7 +191,7 @@ prepare_test() {
   fi
   if [[ -f "$tdir/pipeline.env" ]]; then
     # shellcheck source=/dev/null
-    previous=$(IMAGE_SOURCE=""; . "$tdir/pipeline.env"; printf '%s' "$IMAGE_SOURCE")
+    previous=$(. "$tdir/pipeline.env"; printf '%s' "${IMAGE_SOURCE:-}")
   fi
   if [[ "$previous" != "$source" ]]; then
     # Results of another commit or image are not results of this one.
@@ -238,6 +251,7 @@ prepare_test() {
     printf 'IMAGE_SOURCE=%q\n' "$source"
     printf 'GEANT4_VERSION=%q\n' "$version"
     printf 'G4DATA=%q\n' "$g4data"
+    printf 'RUNNER=%q\n' "local-pipeline:$(user_name)@$(uname -n)"
   } > "$tdir/pipeline.env"
   log "$test: Geant4 $version, $(grep -c . "$tdir/jobs.txt" || true) validation macros"
 }
@@ -320,7 +334,7 @@ run_job() {
 
   # Read by export.py for provenance.json, as in the CI. A modified checkout is not
   # the commit, and an image built here has no reference: those fields stay null.
-  export IMAGE GITHUB_REPOSITORY="$REPOSITORY" GITHUB_SHA="$SHA"
+  export IMAGE GITHUB_REPOSITORY="$REPOSITORY" GITHUB_SHA="$SHA" G4MED_RUNNER="${RUNNER:-local-pipeline}"
   if [[ -z "$IMAGE" ]]; then unset IMAGE; fi
   if [[ -n "$(git -C "$tdir/repo" status --porcelain)" ]]; then
     log "$test: the checkout has local changes: provenance.json will not name a commit"
@@ -486,6 +500,110 @@ cmd_status() {
   done
 }
 
+# --------------------------------------------------------------------------- publish
+
+cmd_publish() {
+  local results="" push=true tests=() failed=() t
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir) DIR="${2:-}"; shift 2 ;;
+      --results) results="${2:-}"; shift 2 ;;
+      --no-push) push=false; shift ;;
+      -*) die "unknown option: $1" ;;
+      *) check_test_name "$1"; tests+=("$1"); shift ;;
+    esac
+  done
+  resolve_dir
+  if [[ ${#tests[@]} -eq 0 ]]; then
+    for t in $(prepared_tests); do
+      if [[ -f "$DIR/$t/validation-json/results.json" ]]; then tests+=("$t"); fi
+    done
+  fi
+  [[ ${#tests[@]} -gt 0 ]] || die "no collected results in $DIR"
+
+  local owned=false
+  if [[ -z "$results" ]]; then
+    results="$DIR/validation-results" owned=true
+    if [[ ! -d "$results/.git" ]]; then
+      git clone --quiet "$GIT_URL/validation-results.git" "$results"
+    fi
+  fi
+  [[ -d "$results/.git" ]] || die "not a git checkout: $results"
+  results=$(cd "$results" && pwd)
+  git -C "$results" fetch --quiet origin
+  for t in "${tests[@]}"; do
+    bash "$SELF" _publish "$DIR" "$t" "$results" "$owned" "$push" || failed+=("$t")
+  done
+  [[ ${#failed[@]} -eq 0 ]] || die "not published: ${failed[*]}"
+}
+
+publish_test() {
+  DIR=$1
+  local test=$2 results=$3 owned=$4 push=$5 tdir="$1/$2" version branch org title prov
+  load_env "$test"
+  [[ -f "$tdir/validation-json/results.json" ]] || die "$test: no results to publish: run collect first"
+
+  # Only what the CI would have produced: the CI image of a reviewed commit, unchanged.
+  [[ -n "$IMAGE" && "$IMAGE_SOURCE" == "$IMAGE" && "$IMAGE" == "$CI_REGISTRY/"* ]] \
+    || die "$test: the image was not pulled from the CI ($CI_REGISTRY): results of local builds are not published"
+  [[ "$(git -C "$tdir/repo" rev-parse HEAD)" == "$SHA" && -z "$(git -C "$tdir/repo" status --porcelain)" ]] \
+    || die "$test: the checkout is not $SHA unchanged: only results of a commit are published"
+  git -C "$tdir/repo" fetch --quiet origin
+  git -C "$tdir/repo" merge-base --is-ancestor "$SHA" origin/HEAD \
+    || die "$test: $SHA is not on the default branch: only reviewed code is published"
+  for prov in "$tdir"/runs/*/json/provenance.json "$tdir/validation-json/provenance.json"; do
+    if ! { grep -qF "\"sha\": \"$SHA\"" "$prov" && grep -qF "\"image\": \"$IMAGE\"" "$prov"; }; then
+      die "$test: $prov does not name $SHA and $IMAGE: run the macros again"
+    fi
+  done
+
+  branch="results/$test-local-$(user_name)"
+  if [[ "$owned" == true ]]; then
+    git -C "$results" reset --quiet --hard
+    git -C "$results" clean --quiet -fd
+  fi
+  [[ -z "$(git -C "$results" status --porcelain)" ]] || die "$results has local changes"
+  git -C "$results" checkout --quiet -B "$branch" origin/HEAD
+  version=$("$SCRIPTS/publish-results.sh" --input "$tdir/validation-json" --results "$results" --test "$test")
+  git -C "$results" add -A -- "$test"
+  if git -C "$results" diff --cached --quiet; then
+    log "$test: same results as those published, nothing to propose"
+    return 0
+  fi
+  title="$test: update results (Geant4 $version, local run)"
+  git -C "$results" commit --quiet -m "$title" -m "Source: $REPOSITORY@$SHA
+Image: $IMAGE
+Runner: ${RUNNER:-local-pipeline}"
+  # Already proposed: the branch has these results on top of the current default branch
+  # (if the CI published this test since, the branch is rebuilt on it).
+  if git -C "$results" rev-parse --quiet --verify "origin/$branch" >/dev/null \
+     && git -C "$results" merge-base --is-ancestor origin/HEAD "origin/$branch" \
+     && git -C "$results" diff --quiet "origin/$branch" HEAD -- "$test"; then
+    log "$test: the same results are already proposed on $branch"
+    return 0
+  fi
+  if [[ "$push" != true ]]; then
+    log "$test: committed on $branch in $results, not pushed"
+    return 0
+  fi
+  # The branch belongs to this user and test: a new publication replaces it, as
+  # the CI does with results/<test>.
+  git -C "$results" push --quiet --force origin "HEAD:refs/heads/$branch"
+  org=${GIT_URL##*[/:]}
+  if ! command -v gh >/dev/null 2>&1; then
+    log "$test: pushed $branch; open the pull request: https://github.com/$org/validation-results/compare/$branch?expand=1"
+  elif gh pr view "$branch" -R "$org/validation-results" >/dev/null 2>&1; then
+    log "$test: pushed $branch, its pull request is updated"
+  else
+    gh pr create -R "$org/validation-results" --head "$branch" --title "$title" --body "Results of a local run (ci-workflows scripts/local-pipeline.sh), not of the CI pipeline: review them, then squash and merge.
+
+Source: $REPOSITORY@$SHA
+Image: $IMAGE
+Geant4: $version
+Runner: ${RUNNER:-local-pipeline}"
+  fi
+}
+
 # ------------------------------------------------------------------------------ main
 
 [[ $# -gt 0 ]] || { usage >&2; exit 1; }
@@ -498,8 +616,10 @@ case "$command" in
   submit) cmd_submit "$@" ;;
   collect) cmd_collect "$@" ;;
   status) cmd_status "$@" ;;
+  publish) cmd_publish "$@" ;;
   _prepare) prepare_test "$@" ;;
   _collect) collect_test "$@" ;;
+  _publish) publish_test "$@" ;;
   -h|--help|help) usage ;;
   *) usage >&2; die "unknown command: $command" ;;
 esac
