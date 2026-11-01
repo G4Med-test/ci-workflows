@@ -145,6 +145,9 @@ def export(args):
     (args.output / "job.json").write_text(json.dumps(job, indent=2) + "\n")
     provenance = {"test_repo": git_provenance(), "container_repo": container_provenance(),
                   "image": os.environ.get("IMAGE"), "geant4_version": version}
+    if os.environ.get("G4MED_RUNNER"):
+        # Set by scripts/local-pipeline.sh: these results do not come from the CI.
+        provenance["runner"] = os.environ["G4MED_RUNNER"]
     (args.output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     print("Exported %d plots to %s" % (len(records), args.output))
 

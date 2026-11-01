@@ -194,7 +194,20 @@ $P collect --dir /shared/run                     # after condor (Slurm runs it i
   the run directory must be on a filesystem shared with the nodes; images are
   unpacked in `$TMPDIR` of the node unless `APPTAINER_TMPDIR` is set.
 - `provenance.json` names the test commit and the image as in the CI. It names no
-  commit if the checkout has local changes, and no image if it was built locally.
+  commit if the checkout has local changes, and no image if it was built locally;
+  `runner` (`local-pipeline:<user>@<host>`) tells it apart from a CI run.
+- `publish` proposes the results to
+  [validation-results](https://github.com/G4Med-test/validation-results) with the
+  layout of the CI (`<test>/` and `<test>/versions/<version>/`), on the branch
+  `results/<test>-local-<user>`, and opens a pull request with `gh` (or prints its
+  link). Unlike the CI it does not merge: a maintainer reviews and merges. It publishes
+  only results the CI could have produced: the image pulled from the CI, an unchanged
+  checkout, a commit of the default branch. Pushing needs write access to
+  validation-results (`G4MED_GIT_URL=git@github.com:G4Med-test` for SSH).
+
+  ```bash
+  $P publish --dir /shared/run                   # every collected test, or name them
+  ```
 
 `local-pipeline.sh --help` describes every command and the run directory.
 
