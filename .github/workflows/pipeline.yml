@@ -63,6 +63,7 @@ jobs:
     with:
       image: ${{ needs.build.outputs.image }}
       macro_file: ${{ inputs.macro_file }}
+      tools_ref: ${{ inputs.validation_tools_ref }}
 
   validation:
     needs: [build, unit-test, unit-test-padova]

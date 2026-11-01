@@ -116,6 +116,12 @@ For each macro, one job:
    `plots/<md5>.json` and `job.json` (the parser input), plus `validation-raw-<id>`
    with the outputs, logs and macro, also when parsing fails.
 
+Steps 1 and 2 are `scripts/run-macro.sh` and `scripts/export-macro.sh`, the unit macro
+on Padova is `scripts/run-unit.sh` and the layout written by `publish-results` (below)
+is `scripts/publish-results.sh`: plain bash (3.2 or later) and Apptainer, so that the
+same steps run outside GitHub Actions, on a workstation or a batch farm (`--help` for
+each). Change them, not the workflows, to change what a run does.
+
 `collect-json` runs when all macros succeeded and uploads **`validation-json`**:
 
 - `results.json`: all plots of all macros, as one array;
@@ -248,7 +254,8 @@ repository that first pushed it normally has; otherwise the job only warns.
 | `scripts/seed_versions.py` | One-off: fills `versions/` of validation-results from its history |
 | `scripts/sync-ci-paths-ignore.py` | One-off: pull requests adding the template's `paths-ignore` to every test's `ci.yml` |
 | `scripts/protect-repos.sh` | Ruleset of the default branches (see above) |
-| `tests/` | Tests of `scripts/`, run by `self-test.yml` |
+| `scripts/run-macro.sh`, `export-macro.sh`, `run-unit.sh`, `publish-results.sh` | The steps of the pipeline, shared with runs outside GitHub Actions (see [Validation and portal JSON](#validation-and-portal-json)) |
+| `tests/` | Tests of `scripts/` (the bash scripts with a stub of Apptainer), run by `self-test.yml`, which also runs shellcheck on them |
 | `validation/geantval.py` | Portal format (`getJSON`) and macro helpers |
 | `validation/tests_list.py` | Reads and checks `tests.json` |
 | `validation/tests/` | Regression suite |
