@@ -123,8 +123,13 @@ def load_jobs(repo, config):
 
 def matrix(args):
     _, jobs = load_jobs(args.repo.resolve(), args.config)
-    print(json.dumps({"include": [{"macro": m, "id": hashlib.sha256(m.encode()).hexdigest()[:16]}
-                                  for m in jobs]}))
+    include = [{"macro": m, "id": hashlib.sha256(m.encode()).hexdigest()[:16]} for m in jobs]
+    if args.lines:
+        # For shell scripts without a JSON parser (scripts/local-pipeline.sh).
+        for job in include:
+            print("%s\t%s" % (job["id"], job["macro"]))
+    else:
+        print(json.dumps({"include": include}))
 
 
 def export(args):
@@ -175,6 +180,8 @@ def main():
     sub = command("matrix", matrix, "check the config and metadata() of every macro; "
                   "print the CI job matrix")
     repository(sub)
+    sub.add_argument("--lines", action="store_true",
+                     help="print one '<id> TAB <macro>' line per macro instead of JSON")
     sub = command("export", export, "run parse() on the output of one macro and write portal JSON")
     repository(sub)
     sub.add_argument("--macro", required=True, help="macro listed in the config")
