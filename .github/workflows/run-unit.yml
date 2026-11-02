@@ -50,9 +50,11 @@ jobs:
             echo "Pulling from: $IMAGE"
             apptainer pull simulation.sif "$IMAGE"
           fi
-          echo "geant4_version=$(sudo apptainer exec --unsquash simulation.sif geant4-config --version)" >> "$GITHUB_OUTPUT"
+          # The Geant4 tag of the base image without its "v", as in apptainer-build-deploy.yml.
+          v="$(sudo apptainer inspect --labels simulation.sif | sed -n 's/^org\.opencontainers\.image\.version: v//p')"
+          echo "geant4_version=${v:-$(sudo apptainer exec --unsquash simulation.sif geant4-config --version)}" >> "$GITHUB_OUTPUT"
 
-      # Datasets depend on the Geant4 version of the image.
+      # Datasets depend on the Geant4 version of the image (a beta's may differ from its release's).
       - name: Restore Geant4 data from cache
         id: g4data-cache
         uses: actions/cache@v4

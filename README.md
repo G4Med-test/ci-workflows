@@ -110,7 +110,10 @@ For each macro, one job:
    Geant4 errors in them fail the job. Macros must be self-contained (no
    `/control/execute`, loops or aliases);
 2. runs `validation/export.py export` inside the image, which provides Python with
-   NumPy and uproot (no ROOT) and `geant4-config` for the version;
+   NumPy and uproot (no ROOT). The Geant4 version is the tag of the base image
+   without its `v` (`11.5.0.beta` for `v11.5.0.beta`, from its
+   `org.opencontainers.image.version` label), not `geant4-config --version`, which
+   omits the suffix of pre-releases;
 3. checks every plot (array lengths, edges, uncertainties, no NaN/Infinity; errors
    name the plot) and uploads `validation-json-<id>` with `results.json`,
    `plots/<md5>.json` and `job.json` (the parser input), plus `validation-raw-<id>`

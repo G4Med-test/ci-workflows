@@ -216,7 +216,9 @@ prepare_test() {
       || die "$test: cannot pull $image: the CI did not push an image for this commit (or Geant4 tag), or the package is private (apptainer registry login oras://ghcr.io); --build builds it here"
     mv "$sif.part" "$sif"
   fi
-  version=$(apptainer exec --unsquash "$sif" geant4-config --version)
+  # The Geant4 tag of the base image without its "v", as the CI names results.
+  version=$(apptainer exec --unsquash -B "$TOOLS:/ci-tools:ro" "$sif" \
+    /opt/venv/bin/python3 /ci-tools/validation/export.py version)
   [[ -n "$version" ]] || die "$test: no Geant4 version in the image"
 
   if [[ -z "$g4data" && -n "${G4DATA:-}" ]]; then g4data="$G4DATA"; fi

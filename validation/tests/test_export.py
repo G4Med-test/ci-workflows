@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import numpy as np
 import uproot
 from uproot.writing.identify import to_TH1x, to_TAxis
@@ -230,6 +231,22 @@ class ExportTests(unittest.TestCase):
                                       if not (Path(p) / "geant4-config").exists())
         result = subprocess.run(command[:-1] + [str(self.path / "json2")], capture_output=True, text=True, env=env)
         self.assertIn("geant4-config not found", result.stderr)
+
+    def test_version_from_the_tag_label(self):
+        # geant4-config --version of v11.5.0.beta says 11.5.0: the tag keeps the beta apart.
+        labels = self.path / "labels.json"
+        original = export.LABELS
+        self.addCleanup(setattr, export, "LABELS", original)
+        export.LABELS = labels
+        labels.write_text(json.dumps({"org.opencontainers.image.version": "v11.5.0.beta"}))
+        self.assertEqual(export.geant4_version(), "11.5.0.beta")
+        labels.write_text(json.dumps({"org.opencontainers.image.version": "11.5.0.beta"}))
+        bin_dir = self.path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "geant4-config").write_text("#!/bin/sh\necho 11.5.0\n")
+        (bin_dir / "geant4-config").chmod(0o755)
+        with unittest.mock.patch.dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ["PATH"]):
+            self.assertEqual(export.geant4_version(), "11.5.0")  # not a Geant4 tag: ignored
 
     def test_empty_collection_fails(self):
         result = subprocess.run([sys.executable, str(TOOLS / "export.py"), "collect", "--input", str(self.path),

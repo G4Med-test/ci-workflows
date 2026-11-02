@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Exports the portal JSON of one macro run by run-macro.sh, as run-validation-padova.yml
 # does: validation/export.py runs inside the test image (Python with NumPy and uproot,
-# geant4-config for the version), with the test repository bound read-only at
+# the labels for the Geant4 version), with the test repository bound read-only at
 # /validation, this ci-workflows checkout at /ci-tools and the working directory at
 # /work. It reads <work>/outputs and writes <work>/json: results.json, plots/<md5>.json,
 # job.json and provenance.json.
