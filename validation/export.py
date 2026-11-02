@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -21,8 +22,25 @@ def load_parser(repo):
     return parser
 
 
+# OCI labels of the image, those of the geant4-alma9 base included (Apptainer inherits them).
+LABELS = Path("/.singularity.d/labels.json")
+GEANT4_TAG = re.compile(r"v\d+\.\d+\.\d+")
+
+
+def image_labels():
+    return json.loads(LABELS.read_text()) if LABELS.exists() else {}
+
+
 def geant4_version():
-    """Version of the Geant4 in this environment: run the export inside the test image."""
+    """Version of the Geant4 in this environment: run the export inside the test image.
+
+    It is the Geant4 tag of the base image without its "v" (11.5.0.beta for v11.5.0.beta),
+    from its org.opencontainers.image.version label: geant4-config --version, used only
+    without that label, omits the suffix of pre-releases, so a beta and its release
+    would share results/versions/<version>/."""
+    tag = image_labels().get("org.opencontainers.image.version") or ""
+    if GEANT4_TAG.match(tag):
+        return tag[1:]
     try:
         return subprocess.run(["geant4-config", "--version"], check=True,
                               capture_output=True, text=True).stdout.strip()
@@ -38,10 +56,7 @@ def git_provenance():
 
 def container_provenance():
     """Container recipe and Geant4 commit, from the OCI labels baked into the image."""
-    path = Path("/.singularity.d/labels.json")
-    if not path.exists():
-        return None
-    labels = json.loads(path.read_text())
+    labels = image_labels()
     url, sha = labels.get("org.opencontainers.image.source"), labels.get("org.opencontainers.image.revision")
     if not (url and sha):
         return None
@@ -152,6 +167,10 @@ def export(args):
     print("Exported %d plots to %s" % (len(records), args.output))
 
 
+def version(args):
+    print(geant4_version())
+
+
 def collect(args):
     records = []
     provenance = None
@@ -190,7 +209,9 @@ def main():
     sub.add_argument("--macro", required=True, help="macro listed in the config")
     sub.add_argument("--input", type=Path, required=True, help="run directory with the outputs")
     sub.add_argument("--output", type=Path, required=True, help="new directory for the JSON files")
-    sub.add_argument("--version", help="Geant4 version (default: geant4-config --version)")
+    sub.add_argument("--version", help="Geant4 version (default: the tag of the image, as `version` prints it)")
+    command("version", version, "print the Geant4 version of this image: its Geant4 tag without "
+            "the 'v', or geant4-config --version if the image has no tag label")
     sub = command("collect", collect, "merge the results.json of every exported macro")
     sub.add_argument("--input", type=Path, required=True, help="directory of export outputs")
     sub.add_argument("--output", type=Path, required=True, help="new directory for the merged JSON")
