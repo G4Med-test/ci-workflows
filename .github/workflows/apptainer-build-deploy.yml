@@ -17,16 +17,47 @@ on:
         required: false
         default: main
         type: string
+      validation_config:
+        description: "Test configuration, whose optional \"geant4\" field limits the Geant4 versions"
+        required: false
+        default: validation/config.json
+        type: string
     outputs:
       image:
         description: "oras:// reference of the pushed multi-arch SIF, used by the test jobs; empty on pull requests"
         value: ${{ jobs.index.outputs.image }}
 
 jobs:
+  # A Geant4 version that the test excludes (validation/geant4_range.py) stops the
+  # pipeline before building: requested by hand, or the TAG default of Apptainer.def.
+  # Geant4 validations do not start such tests at all. A job of its own, because the
+  # build copies the whole checkout into the image.
+  check-geant4:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/ci-workflows
+          ref: ${{ inputs.tools_ref }}
+          path: ci-tools
+      - name: Check that the test supports this Geant4 version
+        env:
+          GEANT4_TAG: ${{ inputs.geant4_tag }}
+          CONFIG: ${{ inputs.validation_config }}
+          APPTAINER_DEF: ${{ inputs.apptainer_def }}
+        run: |
+          if [[ -n "$GEANT4_TAG" ]]; then
+            python3 ci-tools/validation/geant4_range.py check --config "$CONFIG" --tag "$GEANT4_TAG"
+          else
+            python3 ci-tools/validation/geant4_range.py check --config "$CONFIG" --apptainer-def "$APPTAINER_DEF"
+          fi
+
   # Each architecture is built and tested on a native runner (no emulation) and
   # pushed as :<tag>-<arch>; the index job below publishes :<tag> for both.
   build-test-container:
     name: build (${{ matrix.arch }})
+    needs: check-geant4
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read

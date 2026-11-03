@@ -54,7 +54,9 @@ build ──┬── unit-test         (GitHub, ubuntu-24.04) ──┬── v
   [`ghcr.io/g4med-test/geant4-alma9`](https://github.com/G4Med-test/geant4-alma9),
   whose tags are the Geant4 tags and whose environment the test image inherits, and
   pushes `oras://ghcr.io/<owner>/<repo>:<commit SHA>`, or `<commit SHA>-<geant4_tag>`
-  when a Geant4 version is requested. The test jobs use that reference.
+  when a Geant4 version is requested. The test jobs use that reference. Its first
+  job stops the pipeline if the test does not support that Geant4 version (see
+  [Supported Geant4 versions](#supported-geant4-versions)).
 - **unit-test** (`run-unit.yml`) runs the unit macro on GitHub, with the Geant4
   datasets downloaded once per Geant4 version and cached.
 - **unit-test-padova** (`run-unit-padova.yml`) runs it on Padova, with the datasets
@@ -105,7 +107,8 @@ repositories.
 
 The test repository provides two files (see the template for a documented example):
 
-- `validation/config.json`: `{"macros": ["a.mac", ...]}`, paths relative to `macro/`.
+- `validation/config.json`: `{"macros": ["a.mac", ...]}`, paths relative to `macro/`,
+  and optionally the supported Geant4 versions (below).
 - `validation/parser.py`, with two functions:
   - `metadata(commands)` receives one macro as `[(command, value), ...]` and returns
     a dict with at least `TEST`; every setting is read from the macro.
@@ -114,6 +117,35 @@ The test repository provides two files (see the template for a documented exampl
 
 `validation/geantval.py` provides `getJSON`, `one_command`, `single_run` and
 `energy_mev`. `getJSON` rejects arguments that do not exist for the plot type.
+
+### Supported Geant4 versions
+
+A test that cannot work with some Geant4 versions, typically because it builds an
+external framework that supports only some of them (GATE, opengate), says so in
+`validation/config.json`:
+
+```json
+{"macros": ["main.mac"],
+ "geant4": {"min": "11.4", "max": "11.4", "reason": "opengate 10.1.1 targets Geant4 11.4"}}
+```
+
+`min` and `max` are inclusive, and at least one is needed: `"11.4"` is the whole 11.4
+series (pre-releases included, so 11.5.0.beta is above it), `"11.4.2"` one version.
+`reason` is required and shown wherever the test is left out. Use `max` only for
+such a known incompatibility: for a test of Geant4 itself, failing with a new version
+is what the validation is for.
+
+- A [Geant4 validation](#validating-a-geant4-version) does not start the test with a
+  version outside the range: the test is *not applicable*, with the reason, and does
+  not count as a failure.
+- A pipeline started by hand with such a `geant4_tag` stops before the build
+  (`check-geant4` job), with the reason; so does a pipeline whose default `TAG` in
+  `Apptainer.def` is outside the range.
+- `local-pipeline.sh prepare --geant4 <tag>` skips the test.
+- `self-test.yml` checks the field, and the default `TAG` of every listed test
+  against it. `validation/geant4_range.py` holds the rules.
+
+### Running a macro
 
 For each macro, one job:
 
@@ -286,13 +318,17 @@ not edit it.
    workflow again once the image is published. If the build disappears (for example
    cancelled by the hourly run of `geant4-alma9`, which shares its concurrency group)
    it is requested again, up to 3 times; then the issue reports the failure and closes.
-2. The tests are queued in ascending order of the **median duration** of their last 15
+2. Tests whose `validation/config.json` excludes the version are not started: they are
+   *not applicable*, with the reason (see
+   [Supported Geant4 versions](#supported-geant4-versions)), and the report counts
+   only the others.
+3. The tests are queued in ascending order of the **median duration** of their last 15
    successful runs on the default branch (fastest first, unknown last), and at most
    `max_parallel` (default 3) run at the same time, so that the Padova runner is not
    flooded by 20 pipelines at once.
-3. `release-queue.yml` starts the next test when one finishes: the last job of each
+4. `release-queue.yml` starts the next test when one finishes: the last job of each
    pipeline starts it, and it also runs every 15 minutes in case a start is lost.
-4. When every test has finished it comments with the **report** (result, duration and
+5. When every test has finished it comments with the **report** (result, duration and
    the comparison of each test with its previous Geant4 version), mentioning whoever
    asked for the validation, and closes the issue. Watching this repository, or the
    issue, gives the notification too.
@@ -343,6 +379,7 @@ repository that first pushed it normally has; otherwise the job only warns.
 | `tests/` | Tests of `scripts/` (the bash scripts with a stub of Apptainer), run by `self-test.yml`, which also runs shellcheck on them |
 | `validation/geantval.py` | Portal format (`getJSON`) and macro helpers |
 | `validation/tests_list.py` | Reads and checks `tests.json` |
+| `validation/geant4_range.py` | Supported Geant4 versions of a test (`check --help`) |
 | `validation/tests/` | Regression suite |
 
 Run the suite with the test repositories checked out next to ci-workflows (or set

@@ -35,7 +35,8 @@ Commands:
         image     by default the one the CI built for the commit:
                   oras://ghcr.io/g4med-test/<test>:<commit>[-<TAG>]; with --build,
                   built from the checkout (APPTAINER_BUILD_FLAGS, e.g. --fakeroot)
-        --geant4  geant4-alma9 tag (e.g. v11.4.3) instead of the TAG of Apptainer.def
+        --geant4  geant4-alma9 tag (e.g. v11.4.3) instead of the TAG of Apptainer.def;
+                  tests whose validation/config.json excludes it are skipped
         datasets  --g4data DIR, else $G4DATA, else CVMFS, else downloaded once per
                   Geant4 version into DIR/g4data/<version>
   unit [--macro FILE] TEST...
@@ -117,6 +118,47 @@ load_env() {
   . "$DIR/$1/pipeline.env"
 }
 
+# The first string value of key $2 in the JSON file $1 (the fields of the "geant4"
+# object have names used nowhere else in validation/config.json).
+json_string() { sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -n 1; }
+
+# Whether the Geant4 tag $1 (v11.4.3, v11.5.0.beta), cut to the length of the bound $2
+# (11.4 or 11.4.2), is at least (ge) or at most (le, $3) the bound.
+version_vs_bound() {
+  local i n=2 v b
+  [[ $1 =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+) ]] || return 1
+  v=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+  [[ $2 =~ ^([0-9]+)\.([0-9]+)(\.([0-9]+))?$ ]] || return 1
+  b=("${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[4]}")
+  if [[ -n "${b[2]}" ]]; then n=3; fi
+  for ((i = 0; i < n; i++)); do
+    if ((10#${v[i]} != 10#${b[i]})); then
+      if [[ $3 == ge ]]; then ((10#${v[i]} > 10#${b[i]})); else ((10#${v[i]} < 10#${b[i]})); fi
+      return
+    fi
+  done
+}
+
+# Why validation/config.json ($1) excludes the Geant4 tag $2, as
+# validation/geant4_range.py says it (a copy, so that the host needs no Python; the
+# CI checks the field); nothing if it allows the tag.
+geant4_excluded() {
+  local min max range
+  [[ -f "$1" ]] || return 0
+  min=$(json_string "$1" min)
+  max=$(json_string "$1" max)
+  if [[ -n "$min" ]] && ! version_vs_bound "$2" "$min" ge; then :
+  elif [[ -n "$max" ]] && ! version_vs_bound "$2" "$max" le; then :
+  else return 0
+  fi
+  if [[ "$min" == "$max" ]]; then range="Geant4 $min"
+  elif [[ -z "$max" ]]; then range="Geant4 >= $min"
+  elif [[ -z "$min" ]]; then range="Geant4 <= $max"
+  else range="Geant4 $min to $max"
+  fi
+  echo "requires $range: $(json_string "$1" reason)"
+}
+
 prepared_tests() {
   local env
   for env in "$DIR"/*/pipeline.env; do
@@ -163,7 +205,7 @@ prepare_test() {
   DIR=$1
   local test=$2 ref=$3 tag=$4 build=$5 g4data=$6
   local tdir="$DIR/$test" repo="$DIR/$test/repo" sif="$DIR/$test/simulation.sif"
-  local target="origin/HEAD" sha image="" source previous="" version id macro
+  local target="origin/HEAD" sha image="" source previous="" version id macro why
 
   log "$test: checking out ${ref:-the default branch}"
   mkdir -p "$tdir"
@@ -181,6 +223,16 @@ prepare_test() {
   fi
   git -C "$repo" checkout --quiet --detach "$target"
   sha=$(git -C "$repo" rev-parse HEAD)
+
+  if [[ -n "$tag" ]]; then
+    why=$(geant4_excluded "$repo/validation/config.json" "$tag")
+    if [[ -n "$why" ]]; then
+      # Not part of this run: results of another version are not results of this one.
+      rm -rf "$tdir/runs" "$tdir/validation-json" "$tdir/unit" "$tdir/jobs.txt" "$tdir/pipeline.env" "$sif"
+      log "$test: skipped, not applicable to Geant4 $tag: it $why"
+      return 0
+    fi
+  fi
 
   if [[ "$build" == true ]]; then
     source="build:$sha:${tag:-default}"
@@ -620,6 +672,7 @@ case "$command" in
   status) cmd_status "$@" ;;
   publish) cmd_publish "$@" ;;
   _prepare) prepare_test "$@" ;;
+  _geant4_excluded) geant4_excluded "$@" ;;
   _collect) collect_test "$@" ;;
   _publish) publish_test "$@" ;;
   -h|--help|help) usage ;;

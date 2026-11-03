@@ -13,7 +13,9 @@ markers below): the dashboard reads it too. Commands:
             mentioning who asked for it, and close the issue
 
 Tests start in ascending order of the median duration of their last successful runs
-on the default branch (fastest first), at most max_parallel at a time.
+on the default branch (fastest first), at most max_parallel at a time. A test whose
+validation/config.json (on its default branch) excludes the Geant4 version is not
+started: it is "not_applicable", with the reason, and does not count as a failure.
 
 Environment:
   GITHUB_REPOSITORY  this repository (owner/name)
@@ -23,6 +25,7 @@ Environment:
   DASHBOARD_URL      Pages URL of the dashboard (default https://<owner>.github.io/dashboard)
 """
 import argparse
+import base64
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -37,6 +40,7 @@ import urllib.request
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "validation"))
 import compare as comparison  # noqa: E402
+import geant4_range  # noqa: E402
 import tests_list  # noqa: E402
 
 API = "https://api.github.com"
@@ -44,7 +48,7 @@ LABEL = "geant4-release"
 BEGIN, END = "<!-- g4med-release", "-->"
 TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9][A-Za-z0-9.-]*)?\Z")
 FINAL = {"success", "failure", "cancelled", "timed_out", "startup_failure", "skipped", "neutral",
-         "stale", "dispatch_failed"}
+         "stale", "dispatch_failed", "not_applicable"}
 NOTIFY_JOB = "notify"  # last job of pipeline.yml; GitHub names it "run-pipeline / notify"
 MAX_IMAGE_REQUESTS = 3
 IMAGE_RETRY_AFTER = timedelta(minutes=20)  # a build normally shows up within seconds
@@ -132,6 +136,19 @@ def default_branch(repo, cache={}):
     return cache[repo]
 
 
+def geant4_excluded(repo, tag):
+    """Why the test's validation/config.json, on its default branch, excludes the tag; None if it does not."""
+    data = gh("GET", f"/repos/{repo}/contents/validation/config.json", "DISPATCH_TOKEN",
+              params={"ref": default_branch(repo)})
+    if not data:
+        return None
+    try:
+        return geant4_range.excluded(json.loads(base64.b64decode(data["content"])), tag)
+    except ValueError as err:  # its pipeline reports the broken configuration
+        print(f"{repo}: {err}", file=sys.stderr)
+        return None
+
+
 def median_duration(repo):
     """Median duration (s) of the last successful non-PR runs of ci.yml on the default branch."""
     runs = gh("GET", f"/repos/{repo}/actions/workflows/ci.yml/runs", "DISPATCH_TOKEN",
@@ -186,9 +203,10 @@ def select(tests_arg, listed):
     return list(dict.fromkeys(by_name[n.lower()] for n in names))
 
 
-def start_tests(state, repos, explicit, median=median_duration):
+def start_tests(state, repos, explicit, median=median_duration, excluded=geant4_excluded):
     """Queue tests. Without an explicit list, a validation already running is left alone
-    (only tests added to tests.json meanwhile join it); a finished one starts again."""
+    (only tests added to tests.json meanwhile join it); a finished one starts again.
+    Tests that exclude the Geant4 version are "not_applicable" instead of queued."""
     phase = state.get("phase")
     if phase == "waiting-image" and not explicit and state.get("requested"):
         repos = state["requested"]
@@ -201,6 +219,13 @@ def start_tests(state, repos, explicit, median=median_duration):
             continue  # already queued, running, or (no explicit list) finished in this round
         else:
             t.update(state="todo", run_id=None, url=None, duration_s=None, dispatched_at=None)
+    for t in state["tests"]:
+        if t["state"] == "todo":
+            reason = excluded(t["repo"], state["tag"])
+            if reason:
+                t.update(state="not_applicable", reason=reason)
+            else:
+                t.pop("reason", None)
     for t in state["tests"]:
         if t["state"] == "todo" and t.get("median_s") is None:
             t["median_s"] = median(t["repo"])
@@ -222,7 +247,7 @@ def fmt_dur(s):
 
 
 ICON = {"success": "✅", "failure": "❌", "cancelled": "⚪", "timed_out": "⏱️", "startup_failure": "❌",
-        "dispatch_failed": "❌", "todo": "⏳", "stale": "⚪"}
+        "dispatch_failed": "❌", "todo": "⏳", "stale": "⚪", "not_applicable": "⏭️"}
 
 
 def dashboard_url(tag):
@@ -244,7 +269,8 @@ def render(state):
     order = {t["repo"]: i for i, t in enumerate(queue_order(tests), 1)}
     rows = []
     for t in tests:
-        shown = "queued #%d" % order[t["repo"]] if t["state"] == "todo" else t["state"]
+        shown = ("queued #%d" % order[t["repo"]] if t["state"] == "todo"
+                 else "not applicable: " + t["reason"] if t["state"] == "not_applicable" else t["state"])
         run = "[run](%s)" % t["url"] if t.get("url") else "—"
         rows.append("| %s %s | [%s](https://github.com/%s) | %s | %s | %s |" % (
             ICON.get(t["state"], "🔄"), shown, t["repo"].split("/")[1], t["repo"],
@@ -389,14 +415,19 @@ def report(state):
                 cmp = "first version with results"
         elif t["state"] == "success":
             cmp = "results not found"
+        elif t["state"] == "not_applicable":
+            cmp = t["reason"]
         run = "[run](%s)" % t["url"] if t.get("url") else "—"
         rows.append("| %s %s | %s | %s | %s | %s |" % (ICON.get(t["state"], ""), t["state"], name,
                                                        fmt_dur(t.get("duration_s")), cmp, run))
     ok = sum(t["state"] == "success" for t in state["tests"])
+    skipped = sum(t["state"] == "not_applicable" for t in state["tests"])
+    applicable = len(state["tests"]) - skipped
     who = state.get("requested_by")
     mention = f"@{who} " if who and not who.endswith("[bot]") and who != "github-actions" else ""
     return "\n".join([
-        f"{mention}Validation of Geant4 **{state['tag']}** finished: **{ok} of {len(state['tests'])} tests passed**, "
+        f"{mention}Validation of Geant4 **{state['tag']}** finished: **{ok} of {applicable} tests passed**"
+        f"{f' ({skipped} not applicable to this version)' if skipped else ''}, "
         f"{changed_total} plot(s) changed with respect to the previous version.",
         "", "| Result | Test | Duration | Plots | Run |", "| --- | --- | --- | --- | --- |", *rows, "",
         f"Changed: chi2 test of the two versions with p < {comparison.ALPHA}, or a difference above "

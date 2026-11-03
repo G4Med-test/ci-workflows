@@ -79,6 +79,10 @@ jobs:
             exit 0
           fi
           python ci-workflows/validation/export.py matrix --repo test
+      - name: Check that the default Geant4 version is in the test's range
+        run: |
+          python ci-workflows/validation/geant4_range.py check \
+            --config test/validation/config.json --apptainer-def test/Apptainer.def
       - name: Run the repository's own validation tests
         env:
           G4MED_TOOLS: ${{ github.workspace }}/ci-workflows/validation

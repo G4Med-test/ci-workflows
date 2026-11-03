@@ -141,12 +141,20 @@ class ExportTests(unittest.TestCase):
                 parser.output_name(value)
 
     def test_config_must_list_macros(self):
-        for config in ({"macros": {"test.mac": {}}}, {"macros": []}, {"macros": ["a.mac", "a.mac"]}):
+        for config in ({"macros": {"test.mac": {}}}, {"macros": []}, {"macros": ["a.mac", "a.mac"]},
+                       {"macros": ["test.mac"], "geant4": {"min": "11.4"}},
+                       {"macros": ["test.mac"], "geant": {"min": "11.4", "reason": "typo"}}):
             path = self.path / "config.json"
             path.write_text(json.dumps(config))
             result = subprocess.run([sys.executable, str(TOOLS / "export.py"), "matrix", "--repo",
                                      str(WORKSPACE / "CCCStest"), "--config", str(path)], capture_output=True)
             self.assertNotEqual(result.returncode, 0)
+
+    def test_config_accepts_a_geant4_range(self):
+        path = self.path / "config.json"
+        path.write_text(json.dumps({"macros": ["test.mac"], "geant4": {"min": "11.3", "reason": "API"}}))
+        subprocess.run([sys.executable, str(TOOLS / "export.py"), "matrix", "--repo",
+                        str(WORKSPACE / "CCCStest"), "--config", str(path)], capture_output=True, check=True)
 
     def test_matrix_lines_match_the_json_matrix(self):
         def matrix(*extra):

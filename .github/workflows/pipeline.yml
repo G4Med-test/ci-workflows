@@ -43,6 +43,7 @@ jobs:
       apptainer_def: ${{ inputs.apptainer_def }}
       geant4_tag: ${{ inputs.geant4_tag }}
       tools_ref: ${{ inputs.validation_tools_ref }}
+      validation_config: ${{ inputs.validation_config }}
 
   unit-test:
     needs: build

@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 
+import geant4_range
 from geantval import read_macro
 
 
@@ -121,9 +122,14 @@ def write_results(records, output):
 
 def load_jobs(repo, config):
     """metadata() of every configured macro, checking the configuration."""
-    macros = json.loads((repo / config).read_text())["macros"]
+    settings = json.loads((repo / config).read_text())
+    unknown = sorted(set(settings) - {"macros", "geant4"})
+    if unknown:
+        raise ValueError("config: unknown keys %s (only 'macros' and 'geant4')" % ", ".join(unknown))
+    macros = settings["macros"]
     if not isinstance(macros, list) or not macros or len(set(macros)) != len(macros):
         raise ValueError("config 'macros' must be a non-empty list of distinct macro paths")
+    geant4_range.parse(settings.get("geant4"))
     parser = load_parser(repo)
     jobs = {}
     for macro in macros:
