@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Applies the "reviewed-code-only" protection to every test in tests.json and to the
+# Applies the "reviewed-code-only" protection to every test in tests.json, to the
 # repositories the pipeline trusts (ci-workflows, template, geant4-alma9,
-# apptainer-gha-runner), or to the repositories given as arguments.
-# validation-results is left out: the pipeline merges its pull requests itself.
+# apptainer-gha-runner) and to dashboard and .github (`check_protection.py --list`),
+# or to the repositories given as arguments. validation-results is left out: the
+# pipeline merges its pull requests itself. check_protection.py checks the result.
 #
 # - ruleset "reviewed-default-branch" on the default branch: no deletion or force
 #   push, changes only through pull requests approved by someone with write access,
@@ -19,9 +20,8 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 if (($#)); then
   repos=("$@")
 else
-  repos=(G4Med-test/ci-workflows G4Med-test/template G4Med-test/geant4-alma9 G4Med-test/apptainer-gha-runner)
-  while read -r repo; do repos+=("$repo"); done < <(python3 "$here/validation/tests_list.py" matrix \
-    | python3 -c 'import json,sys; print("\n".join(t["repo"] for t in json.load(sys.stdin)["include"]))')
+  repos=()
+  while read -r repo; do repos+=("$repo"); done < <(python3 "$here/scripts/check_protection.py" --list)
 fi
 
 ruleset() {
@@ -62,9 +62,9 @@ for repo in "${repos[@]}"; do
       else
         checks='[]'
       fi ;;
-    # The template skips its own pipeline; geant4-alma9 and apptainer-gha-runner have
-    # no pull request check common to every change.
-    */template | */geant4-alma9 | */apptainer-gha-runner) checks='[]' ;;
+    # The template skips its own pipeline; the others have no pull request check
+    # common to every change (dashboard runs only its update workflow).
+    */template | */geant4-alma9 | */apptainer-gha-runner | */dashboard | */.github) checks='[]' ;;
     *) checks='["run-pipeline / build / build (amd64)", "run-pipeline / unit-test / test-container"]' ;;
   esac
   id=$(gh api "repos/$repo/rulesets" --jq '.[] | select(.name == "reviewed-default-branch") | .id')

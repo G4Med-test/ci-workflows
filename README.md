@@ -6,7 +6,8 @@ Padova runners and export the plots in the
 [Geant Validation Portal](https://geant-val.cern.ch/) JSON format.
 
 New tests start from [G4Med-test/template](https://github.com/G4Med-test/template),
-which already contains everything described here.
+which already contains everything described here: see
+[Adding a test](#adding-a-test).
 
 ## Using the pipeline
 
@@ -79,14 +80,26 @@ runner do not interfere, and need only Apptainer and CVMFS on the runner.
 
 A developer opens a pull request; GitHub builds the image and runs the unit macro.
 Once someone with write access approves and merges it, the push on the default
-branch runs the whole pipeline, Padova included. The check is in
-`run-unit-padova.yml` and `run-validation-padova.yml` themselves, so a test's
-`ci.yml` cannot skip it by calling them directly.
+branch runs the whole pipeline, Padova included.
 
-This relies on the default branch accepting only approved pull requests:
-`scripts/protect-repos.sh` sets that ruleset on ci-workflows and on every test in
-`tests.json` (or on the repositories given as arguments). Run it again after adding
-a test.
+This relies on the default branch accepting only approved pull requests, so before
+anything runs on Padova, `scripts/check_protection.py` reads the rules of the test's
+default branch and stops the pipeline unless they forbid deletion and force pushes
+and require pull requests with at least one approval. A repository that nobody
+protected never reaches Padova; the error says how to protect it. Both checks are in
+`run-unit-padova.yml` and `run-validation-padova.yml` themselves (the Padova runners
+accept jobs only from these two workflows, at `main` of this repository), so a
+test's `ci.yml` cannot skip them by calling them directly.
+
+`scripts/protect-repos.sh` sets the ruleset `reviewed-default-branch`, with these
+rules, on the repositories given as arguments or, without arguments, on every test
+in `tests.json` and on ci-workflows, template, geant4-alma9, apptainer-gha-runner,
+dashboard and .github (`check_protection.py --list`). Organization owners can merge
+their own pull requests without approval, but cannot push directly either. The
+rules of a branch are public, so `check_protection.py` needs no special token; who
+can bypass them is visible only to admins and is not checked: change rulesets only
+with `protect-repos.sh`. `self-test.yml` runs `check_protection.py` on the same
+repositories.
 
 ## Validation and portal JSON
 
@@ -214,6 +227,21 @@ $P collect --dir /shared/run                     # after condor (Slurm runs it i
 
 `local-pipeline.sh --help` describes every command and the run directory.
 
+## Adding a test
+
+An organization owner creates the repository, protected from the start:
+
+```bash
+scripts/add-test.sh MyTest "Short description"
+```
+
+`add-test.sh` creates the public repository `G4Med-test/MyTest` from the template,
+runs `protect-repos.sh` on it and checks the result. For a repository that already
+exists (for example created from the template's web page) it only protects it.
+The developers then work on branches and open pull requests; the build and unit test
+run on GitHub at once, Padova after the merge. When the validation works, a pull
+request adds the test to `tests.json`.
+
 ## Test repositories: `tests.json`
 
 `tests.json` lists the integrated test repositories, each with the ref checked by
@@ -228,7 +256,9 @@ To integrate a new test, add it here with a pull request. Two workflows use it:
 - **`self-test.yml`**, on every push and pull request of this repository: actionlint;
   for every listed repository, `export.py matrix` (config, macros, `metadata()`) and
   its own `validation/tests`, if any, with the exporter of this commit; the regression
-  suite in `validation/tests`; the template's configuration. It needs no secrets.
+  suite in `validation/tests`; the template's configuration; the protection of every
+  listed repository (an unprotected test fails it: run `add-test.sh` or
+  `protect-repos.sh` first). It needs no secrets.
 - **`geant4-release.yml`** validates one Geant4 tag of
   [Geant4/geant4](https://github.com/Geant4/geant4/tags) with the listed tests; see
   [Validating a Geant4 version](#validating-a-geant4-version).
@@ -305,7 +335,9 @@ repository that first pushed it normally has; otherwise the job only warns.
 | `scripts/prune_images.py` | Pruning of old test images |
 | `scripts/seed_versions.py` | One-off: fills `versions/` of validation-results from its history |
 | `scripts/sync-ci-paths-ignore.py` | One-off: pull requests adding the template's `paths-ignore` to every test's `ci.yml` |
-| `scripts/protect-repos.sh` | Ruleset of the default branches (see above) |
+| `scripts/protect-repos.sh` | Ruleset of the default branches (see [Only reviewed code runs on Padova](#only-reviewed-code-runs-on-padova)) |
+| `scripts/check_protection.py` | Checks that ruleset, before Padova and in `self-test.yml` |
+| `scripts/add-test.sh` | Creates and protects a test repository (see [Adding a test](#adding-a-test)) |
 | `scripts/run-macro.sh`, `export-macro.sh`, `run-unit.sh`, `publish-results.sh` | The steps of the pipeline, shared with runs outside GitHub Actions (see [Validation and portal JSON](#validation-and-portal-json)) |
 | `scripts/local-pipeline.sh` | The pipeline outside GitHub Actions, locally or on Slurm/HTCondor (see [above](#running-the-pipeline-outside-github-actions)) |
 | `tests/` | Tests of `scripts/` (the bash scripts with a stub of Apptainer), run by `self-test.yml`, which also runs shellcheck on them |

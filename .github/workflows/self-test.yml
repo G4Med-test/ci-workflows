@@ -2,7 +2,9 @@ name: Self-test
 
 # Checks this repository on every change: workflow syntax, the exporter's own
 # regression suite, and every test repository listed in tests.json against the
-# exporter of this commit (configuration, macros and the repository's own tests).
+# exporter of this commit (configuration, macros and the repository's own tests),
+# and that their default branches, and those of the organization's repositories,
+# accept only approved pull requests.
 on:
   push:
   pull_request:
@@ -28,6 +30,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 -m unittest discover -s tests -v
+
+  # A test added to tests.json without protect-repos.sh (or add-test.sh) fails here.
+  protection:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Default branches protected
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_protection.py
 
   list-tests:
     runs-on: ubuntu-24.04
