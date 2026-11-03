@@ -16,6 +16,7 @@
     {"repo": "G4Med-test/microyz", "ref": "main"},
     {"repo": "G4Med-test/NeutronYield", "ref": "main"},
     {"repo": "G4Med-test/pet_imaging", "ref": "main"},
+    {"repo": "G4Med-test/pet_gate10", "ref": "main"},
     {"repo": "G4Med-test/TestDEDX2", "ref": "main"},
     {"repo": "G4Med-test/TestEm12-DPK", "ref": "main"},
     {"repo": "G4Med-test/TestEm3DEDX", "ref": "main"},
