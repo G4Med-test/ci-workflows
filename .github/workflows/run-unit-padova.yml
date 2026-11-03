@@ -19,10 +19,27 @@ on:
         type: string
 
 jobs:
+  # Padova runs only reviewed code: the default branch, never a pull request or
+  # another branch, and only if the rules of that branch accept nothing but approved
+  # pull requests (scripts/check_protection.py). The checks are here, not in
+  # pipeline.yml, so that calling this workflow directly cannot skip them.
+  check-protection:
+    if: ${{ !startsWith(github.event_name, 'pull_request') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: G4Med-test/ci-workflows
+          ref: ${{ inputs.tools_ref }}
+          path: ci-tools
+      - name: Check that the default branch is protected
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 ci-tools/scripts/check_protection.py --branch "$BRANCH" "$GITHUB_REPOSITORY"
+
   test-container-padova:
-    # Padova runs only reviewed code: the default branch (protected, changed only by
-    # approved pull requests), never a pull request or another branch. The check is
-    # here, not in pipeline.yml, so that calling this workflow directly cannot skip it.
+    needs: check-protection
     if: ${{ !startsWith(github.event_name, 'pull_request') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: geant-gha-runner-on-padova
     defaults:

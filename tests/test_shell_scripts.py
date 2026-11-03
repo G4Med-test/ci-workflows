@@ -178,4 +178,15 @@ class PublishResultsTests(ScriptTestCase):
         self.assertIn("invalid test name", result.stderr)
 
 
+class AddTestTests(ScriptTestCase):
+    def test_rejects_a_name_that_is_not_a_repository_name(self):
+        # gh is the stub of apptainer: any call would write the log.
+        (self.tmp / "bin/gh").symlink_to(self.tmp / "bin/apptainer")
+        for args in ([], ["../x"], ["a b"], ["a", "description", "extra"]):
+            result = self.run_script("add-test.sh", *args)
+            self.assertEqual(result.returncode, 2, args)
+            self.assertIn("usage: add-test.sh", result.stderr)
+        self.assertFalse((self.tmp / "apptainer.log").exists())
+
+
 if __name__ == "__main__": unittest.main()
