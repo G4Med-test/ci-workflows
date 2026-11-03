@@ -17,6 +17,10 @@ def median(repo):
     return MEDIANS[repo]
 
 
+def supported(repo, tag):
+    return None
+
+
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
         patcher = mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "G4Med-test/ci-workflows"})
@@ -25,7 +29,7 @@ class ReleaseTests(unittest.TestCase):
 
     def started(self, repos=REPOS, explicit=False, state=None):
         state = state or release.new_state("v11.4.4")
-        release.start_tests(state, repos, explicit, median=median)
+        release.start_tests(state, repos, explicit, median=median, excluded=supported)
         return state
 
     def test_queue_is_fastest_first_unknown_last(self):
@@ -42,14 +46,14 @@ class ReleaseTests(unittest.TestCase):
         state = self.started()
         state["tests"][0].update(state="in_progress", run_id=1)
         state["tests"][1].update(state="success", run_id=2)
-        release.start_tests(state, REPOS + ["G4Med-test/D"], False, median=lambda r: 5)
+        release.start_tests(state, REPOS + ["G4Med-test/D"], False, median=lambda r: 5, excluded=supported)
         self.assertEqual([t["state"] for t in state["tests"]], ["in_progress", "success", "todo", "todo"])
 
     def test_explicit_rerun_resets_only_finished_tests(self):
         state = self.started()
         state["tests"][0].update(state="failure", run_id=1)
         state["tests"][1].update(state="in_progress", run_id=2)
-        release.start_tests(state, ["G4Med-test/A", "G4Med-test/B"], True, median=median)
+        release.start_tests(state, ["G4Med-test/A", "G4Med-test/B"], True, median=median, excluded=supported)
         self.assertEqual([(t["state"], t["run_id"]) for t in state["tests"][:2]], [("todo", None), ("in_progress", 2)])
 
     def test_finished_validation_starts_again(self):
@@ -57,14 +61,30 @@ class ReleaseTests(unittest.TestCase):
         for t in state["tests"]:
             t["state"] = "success"
         state["phase"] = "done"
-        release.start_tests(state, REPOS, False, median=median)
+        release.start_tests(state, REPOS, False, median=median, excluded=supported)
         self.assertEqual({t["state"] for t in state["tests"]}, {"todo"})
 
     def test_waiting_image_keeps_the_requested_tests(self):
         state = release.new_state("v11.4.4")
         state.update(phase="waiting-image", requested=["G4Med-test/C"])
-        release.start_tests(state, REPOS, False, median=median)
+        release.start_tests(state, REPOS, False, median=median, excluded=supported)
         self.assertEqual([t["repo"] for t in state["tests"]], ["G4Med-test/C"])
+
+    def test_tests_that_exclude_the_version_are_not_applicable(self):
+        state = release.new_state("v11.2.2")
+        release.start_tests(state, REPOS, False, median=median,
+                            excluded=lambda repo, tag: "requires Geant4 11.4: opengate" if repo.endswith("B") else None)
+        b = state["tests"][1]
+        self.assertEqual((b["state"], b["reason"]), ("not_applicable", "requires Geant4 11.4: opengate"))
+        self.assertNotIn("median_s", b)
+        self.assertEqual([t["repo"] for t in release.queue_order(state["tests"])], ["G4Med-test/A", "G4Med-test/C"])
+        self.assertIn("⏭️ not applicable: requires Geant4 11.4: opengate", release.render(state))
+        for t in state["tests"]:
+            if t["state"] == "todo":
+                t["state"] = "success"
+        text = release.report(state)
+        self.assertIn("**2 of 2 tests passed** (1 not applicable to this version)", text)
+        self.assertIn("| ⏭️ not_applicable | B | — | requires Geant4 11.4: opengate | — |", text)
 
     def test_select(self):
         self.assertEqual(release.select("", REPOS), REPOS)

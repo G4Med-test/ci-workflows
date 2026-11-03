@@ -116,14 +116,15 @@ class LocalPipelineTests(unittest.TestCase):
         self.run_dir = self.tmp / "run"
         self.sha = self.make_test_repo("Fake", {"a.mac": "/run/beamOn 10\n", "b.mac": "/run/beamOn 20\n"})
 
-    def make_test_repo(self, name, macros):
+    def make_test_repo(self, name, macros, geant4=None):
         src = self.tmp / "src" / name
         (src / "macro").mkdir(parents=True)
         (src / "validation").mkdir()
         for macro, text in macros.items():
             (src / "macro" / macro).write_text(text)
         (src / "macro/unit.mac").write_text("/run/beamOn 1\n")
-        (src / "validation/config.json").write_text(json.dumps({"macros": sorted(macros)}))
+        config = {"macros": sorted(macros), **({"geant4": geant4} if geant4 else {})}
+        (src / "validation/config.json").write_text(json.dumps(config, indent=1))
         (src / "validation/parser.py").write_text(PARSER)
         (src / "Apptainer.def").write_text("Bootstrap: oras\n")
         git = ["git", "-C", str(src), "-c", "user.name=t", "-c", "user.email=t@t"]
@@ -230,6 +231,31 @@ class LocalPipelineTests(unittest.TestCase):
         self.assertFalse((self.run_dir / "g4data").exists())
         self.pipeline("run", "1")
         self.assertIn(f"{self.tmp}/data:/g4data:ro", self.calls("run")[0]["args"])
+
+    def test_skips_tests_that_exclude_the_geant4_tag(self):
+        self.make_test_repo("Gate", {"g.mac": "/run/beamOn 5\n"}, {"min": "11.4", "reason": "opengate"})
+        result = self.pipeline("prepare", "--geant4", "v11.3.2", "Fake", "Gate")
+        self.assertIn("Gate: skipped, not applicable to Geant4 v11.3.2: it requires Geant4 >= 11.4: opengate",
+                      result.stderr)
+        self.assertEqual([c["args"][-1] for c in self.calls("pull")],
+                         [f"oras://ghcr.io/g4med-test/fake:{self.sha}-v11.3.2"])
+        self.assertEqual({t for t, _, _ in self.jobs()}, {"Fake"})
+        self.assertFalse((self.run_dir / "Gate/pipeline.env").exists())
+
+    def test_geant4_range_matches_geant4_range_py(self):
+        sys.path[:0] = [str(TOOLS / "validation"), str(TOOLS / "validation/tests")]
+        import geant4_range
+        from test_geant4_range import CASES
+        config = self.tmp / "config.json"
+        for field, tag, _ in CASES + [({"min": "11.3", "max": "11.4", "reason": "two"}, "v11.5.0", False),
+                                      ({"max": "11.4", "reason": "one"}, "v11.5.0", False)]:
+            config.write_text(json.dumps({"macros": ["a.mac"], "geant4": field}, indent=1))
+            out = subprocess.run(["bash", str(PIPELINE), "_geant4_excluded", str(config), tag],
+                                 capture_output=True, text=True, check=True).stdout.strip()
+            self.assertEqual(out or None, geant4_range.excluded({"geant4": field}, tag), (field, tag))
+        config.write_text(json.dumps({"macros": ["min.mac"]}))
+        self.assertEqual(subprocess.run(["bash", str(PIPELINE), "_geant4_excluded", str(config), "v9.6.4"],
+                                        capture_output=True, text=True, check=True).stdout, "")
 
     def test_local_changes_leave_the_commit_out_of_the_provenance(self):
         self.pipeline("prepare", "Fake")
